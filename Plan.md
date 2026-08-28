@@ -52,9 +52,9 @@
 
 **Готовое состояние:** проект воспроизводимо ставится, валидирует config, хранит workflow в PostgreSQL, не нарушает owner/state/audit-инварианты и автоматически валидирует живой план.
 
-#### P0.T0. Валидация и обновление плана — ⬜ NOT_STARTED
+#### P0.T0. Валидация и обновление плана — ✅ DONE
 
-- [ ] **P0.T0 завершена и имеет evidence.**
+- [x] **P0.T0 завершена и имеет evidence.**
 - **Файлы:** create `scripts/check_plan.py`, `scripts/update_plan_status.py`, `tests/unit/scripts/test_check_plan.py`, `tests/unit/scripts/test_update_plan_status.py`; modify `README.md`, `.github/workflows/ci.yml`.
 - **Тесты:** parser находит P0–P7/T0–T17, запрещает `DONE` без evidence, запрещенный перескок фазы и неизвестный status; updater атомарно меняет task/phase row и evidence journal.
 - **Команды:** `python scripts/check_plan.py Plan.md`; пример task update: `python scripts/update_plan_status.py complete-task P0.T0 --evidence "pytest tests/unit/scripts -v; 12 passed; 2026-08-28"`; пример phase update: `python scripts/update_plan_status.py complete-phase P0 --evidence "ruff, mypy, pytest, migration round trip; all exit 0; 2026-08-28"`.
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Спецификация и plan готовы; application scaffold отсутствует | ⬜ NOT_STARTED | Нет; начать с P0.T0 |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0 | 🟡 IN_PROGRESS | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,7 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| 2026-08-28T12:49:53Z | P0.T0 | 327cfc5+worktree | python -m unittest discover -s tests/unit/scripts -p test_*.py -v: 8 passed; python scripts/check_plan.py Plan.md: PLAN_OK phases=8 tasks=18; git diff --check: exit 0 | Plan.md | Нет |
 
 ## 8. Definition of Done фазы
 
