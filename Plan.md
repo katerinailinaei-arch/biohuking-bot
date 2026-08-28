@@ -77,7 +77,7 @@
 - **Зависит от:** P0.T1.
 - **Результат:** чистое доменное ядро без aiogram/SQLAlchemy/provider SDK.
 
-#### P0.T3. PostgreSQL schema, Alembic и constraints — ⬜ NOT_STARTED
+#### P0.T3. PostgreSQL schema, Alembic и constraints — 🔴 BLOCKED
 
 - [ ] **P0.T3 завершена и имеет evidence.**
 - **Файлы:** create `alembic.ini`, `src/bodrye_bot/db/base.py`, `db/models/*.py`, `db/migrations/env.py`, initial revision; tests `tests/integration/test_migrations.py`, `test_constraints.py`.
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2 | 🟡 IN_PROGRESS | Нет |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2; P0.T3 ожидает тестовую БД | 🔴 BLOCKED | PostgreSQL 17 слушает порт 5433, но TEST_DATABASE_URL не настроен; Docker отсутствует |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,6 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-28T13:22:35Z | P0.T3 | 634104f | docker --version: команда отсутствует; PostgreSQL 17 service: running; port 5433: listening; psql без пароля: authentication rejected | Plan.md | Нужен локальный TEST_DATABASE_URL к отдельной тестовой БД; секрет не передавать в чат |
 | 2026-08-28T13:14:28Z | P0.T2 | f157e1c+worktree | pytest: 50 passed including 32 domain/property tests; ruff: passed; mypy: passed; plan validation and diff check: passed | Plan.md | Нет |
 | 2026-08-28T13:07:44Z | P0.T1 | 28b4684+worktree | pytest: 18 passed; ruff: passed; mypy: passed; clean install: passed; plan validation and diff check: passed | Plan.md | Нет |
 | 2026-08-28T12:49:53Z | P0.T0 | 327cfc5+worktree | python -m unittest discover -s tests/unit/scripts -p test_*.py -v: 8 passed; python scripts/check_plan.py Plan.md: PLAN_OK phases=8 tasks=18; git diff --check: exit 0 | Plan.md | Нет |
