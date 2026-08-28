@@ -16,6 +16,19 @@ python -m pip install -e . --group dev
 
 Заполните обязательные значения `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, `TELEGRAM_CHANNEL_ID` и `GROQ_API_KEY` в локальном `.env`. Секреты нельзя коммитить или отправлять в Telegram.
 
+## Локальная PostgreSQL
+
+Для разработки schema поднимается только на loopback-интерфейсе; production-профиль появится отдельной задачей. Перед запуском задайте уникальный локальный пароль, затем примените migration:
+
+```powershell
+$env:POSTGRES_PASSWORD = "<local-password>"
+docker compose up -d postgres
+$env:DATABASE_URL = "postgresql+asyncpg://bodrye_bot:<url-encoded-local-password>@127.0.0.1:5432/bodrye_bot"
+python -m alembic upgrade head
+```
+
+`DATABASE_URL` также должен быть задан в локальном `.env` для будущих bot/worker-процессов. PostgreSQL не публикуется наружу: compose привязывает его только к `127.0.0.1`.
+
 ## Проверки
 
 ```powershell

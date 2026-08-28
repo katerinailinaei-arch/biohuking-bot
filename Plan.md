@@ -77,9 +77,9 @@
 - **Зависит от:** P0.T1.
 - **Результат:** чистое доменное ядро без aiogram/SQLAlchemy/provider SDK.
 
-#### P0.T3. PostgreSQL schema, Alembic и constraints — 🔴 BLOCKED
+#### P0.T3. PostgreSQL schema, Alembic и constraints — ✅ DONE
 
-- [ ] **P0.T3 завершена и имеет evidence.**
+- [x] **P0.T3 завершена и имеет evidence.**
 - **Файлы:** create `alembic.ini`, `src/bodrye_bot/db/base.py`, `db/models/*.py`, `db/migrations/env.py`, initial revision; tests `tests/integration/test_migrations.py`, `test_constraints.py`.
 - **Тесты:** upgrade → downgrade → upgrade на PostgreSQL 16; owner-qualified FKs, unique approval/hash, job idempotency, immutable versions, audit and operational tables.
 - **Зависит от:** P0.T2.
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2; P0.T3 ожидает тестовую БД | 🔴 BLOCKED | PostgreSQL 17 слушает порт 5433, но TEST_DATABASE_URL не настроен; Docker отсутствует |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2, P0.T3 | 🟡 IN_PROGRESS | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,6 +359,9 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-28T18:10:47Z | P0.T3 | b2fd65e+worktree | PostgreSQL focused: 19 passed; upgrade-downgrade-upgrade and DATABASE_URL migration path verified; full pytest: 69 passed; Ruff and strict mypy: clean | Plan.md | Нет |
+| 2026-08-28T17:58:53Z | P0.T3 | b2fd65e+worktree | PostgreSQL focused: 16 passed; migration upgrade-downgrade-upgrade; full pytest: 66 passed; Ruff and strict mypy: clean | Plan.md | Нет |
+| 2026-08-28T15:46:47Z | P0.T3 start | b2fd65e+worktree | baseline pytest: 50 passed; pg_isready 127.0.0.1:55432: accepting connections; PostgreSQL 17.11; public tables: 0 | Plan.md | Статус исправлен на IN_PROGRESS; schema/migrations ещё не реализованы |
 | 2026-08-28T13:22:35Z | P0.T3 | 634104f | docker --version: команда отсутствует; PostgreSQL 17 service: running; port 5433: listening; psql без пароля: authentication rejected | Plan.md | Нужен локальный TEST_DATABASE_URL к отдельной тестовой БД; секрет не передавать в чат |
 | 2026-08-28T13:14:28Z | P0.T2 | f157e1c+worktree | pytest: 50 passed including 32 domain/property tests; ruff: passed; mypy: passed; plan validation and diff check: passed | Plan.md | Нет |
 | 2026-08-28T13:07:44Z | P0.T1 | 28b4684+worktree | pytest: 18 passed; ruff: passed; mypy: passed; clean install: passed; plan validation and diff check: passed | Plan.md | Нет |
