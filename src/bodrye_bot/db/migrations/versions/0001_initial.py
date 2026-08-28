@@ -743,6 +743,119 @@ def upgrade() -> None:
             ON review_decisions
             FOR EACH ROW EXECUTE FUNCTION prevent_non_passing_review_supersession()
             """,
+            """
+            CREATE FUNCTION reject_review_decision_update()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'review_decisions are immutable'
+                    USING ERRCODE = '23514',
+                          CONSTRAINT = 'trg_review_decisions_immutable';
+            END;
+            $$
+            """,
+            """
+            CREATE TRIGGER trg_review_decisions_immutable
+            BEFORE UPDATE ON review_decisions
+            FOR EACH ROW EXECUTE FUNCTION reject_review_decision_update()
+            """,
+            """
+            CREATE FUNCTION enforce_approval_deactivation_safety()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+                    RETURN OLD;
+                END IF;
+
+                IF TG_OP = 'DELETE'
+                   OR (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL) THEN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM content_workflows AS workflow
+                        WHERE workflow.id = OLD.workflow_id
+                          AND workflow.owner_id = OLD.owner_id
+                          AND workflow.status = 'approved'
+                          AND workflow.current_version_id = OLD.draft_version_id
+                    ) THEN
+                        RAISE EXCEPTION 'cannot deactivate approval for approved workflow'
+                            USING ERRCODE = '23514',
+                                  CONSTRAINT = 'ck_approval_deactivation_workflow';
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM publication_jobs AS job
+                        WHERE job.approval_id = OLD.id
+                          AND job.owner_id = OLD.owner_id
+                          AND job.status IN ('scheduled', 'processing')
+                    ) THEN
+                        RAISE EXCEPTION 'cannot deactivate approval backing active publication job'
+                            USING ERRCODE = '23514',
+                                  CONSTRAINT = 'ck_approval_deactivation_publication';
+                    END IF;
+                END IF;
+
+                IF TG_OP = 'DELETE' THEN
+                    RETURN OLD;
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            """
+            CREATE TRIGGER trg_approval_deactivation_safety
+            BEFORE UPDATE OF revoked_at OR DELETE ON approvals
+            FOR EACH ROW EXECUTE FUNCTION enforce_approval_deactivation_safety()
+            """,
+            """
+            CREATE FUNCTION enforce_publication_job_current_approval()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.status IN ('scheduled', 'processing') AND NOT EXISTS (
+                    SELECT 1
+                    FROM approvals AS approval
+                    JOIN draft_versions AS draft
+                      ON draft.id = approval.draft_version_id
+                     AND draft.owner_id = approval.owner_id
+                    JOIN content_workflows AS workflow
+                      ON workflow.id = approval.workflow_id
+                     AND workflow.owner_id = approval.owner_id
+                    WHERE approval.id = NEW.approval_id
+                      AND approval.owner_id = NEW.owner_id
+                      AND approval.draft_version_id = NEW.draft_version_id
+                      AND approval.revoked_at IS NULL
+                      AND workflow.current_version_id = NEW.draft_version_id
+                      AND approval.content_hash = draft.body_hash
+                      AND (
+                          SELECT review.status
+                          FROM review_decisions AS review
+                          WHERE review.draft_version_id = draft.id
+                            AND review.owner_id = draft.owner_id
+                          ORDER BY review.reviewed_at DESC,
+                                   review.created_at DESC,
+                                   review.id DESC
+                          LIMIT 1
+                      ) = 'passed'
+                ) THEN
+                    RAISE EXCEPTION 'publication job requires current active approval'
+                        USING ERRCODE = '23514',
+                              CONSTRAINT = 'ck_publication_current_approval';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            """
+            CREATE TRIGGER trg_publication_job_current_approval
+            BEFORE INSERT OR UPDATE OF approval_id, draft_version_id, owner_id, status
+            ON publication_jobs
+            FOR EACH ROW EXECUTE FUNCTION enforce_publication_job_current_approval()
+            """,
         )
     )
 
@@ -750,6 +863,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     _execute_all(
         (
+            "DROP TRIGGER IF EXISTS trg_publication_job_current_approval ON publication_jobs",
+            "DROP FUNCTION IF EXISTS enforce_publication_job_current_approval()",
+            "DROP TRIGGER IF EXISTS trg_approval_deactivation_safety ON approvals",
+            "DROP FUNCTION IF EXISTS enforce_approval_deactivation_safety()",
+            "DROP TRIGGER IF EXISTS trg_review_decisions_immutable ON review_decisions",
+            "DROP FUNCTION IF EXISTS reject_review_decision_update()",
             "DROP TRIGGER IF EXISTS trg_review_cannot_stale_approval ON review_decisions",
             "DROP FUNCTION IF EXISTS prevent_non_passing_review_supersession()",
             "DROP TRIGGER IF EXISTS trg_workflow_current_approval ON content_workflows",

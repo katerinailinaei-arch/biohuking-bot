@@ -167,6 +167,52 @@ async def _insert_review_and_approval(
     return approval_id
 
 
+async def _insert_publication_job(
+    connection: AsyncConnection,
+    *,
+    owner_id: int,
+    draft_id: UUID,
+    approval_id: UUID,
+    status: str = "scheduled",
+) -> UUID:
+    job_id = uuid4()
+    await connection.execute(
+        text(
+            """
+            INSERT INTO publication_jobs
+                (id, owner_id, draft_version_id, approval_id, scheduled_at_utc,
+                 status, idempotency_key)
+            VALUES
+                (:id, :owner_id, :draft_id, :approval_id, now(), :status,
+                 :idempotency_key)
+            """
+        ),
+        {
+            "id": job_id,
+            "owner_id": owner_id,
+            "draft_id": draft_id,
+            "approval_id": approval_id,
+            "status": status,
+            "idempotency_key": f"job-{job_id}",
+        },
+    )
+    return job_id
+
+
+async def _assert_statement_is_rejected(
+    connection: AsyncConnection,
+    statement: str,
+    parameters: dict[str, object],
+    message: str,
+) -> None:
+    nested_transaction = await connection.begin_nested()
+    try:
+        with pytest.raises(DBAPIError, match=message):
+            await connection.execute(text(statement), parameters)
+    finally:
+        await nested_transaction.rollback()
+
+
 @pytest.mark.asyncio
 async def test_owner_qualified_fk_rejects_cross_owner_claim(
     pg_connection: AsyncConnection,
@@ -316,6 +362,244 @@ async def test_workflow_approved_status_requires_the_current_active_approval(
     await pg_connection.execute(
         text("UPDATE content_workflows SET status = 'approved' WHERE id = :workflow_id"),
         {"workflow_id": workflow_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_approved_workflow_rejects_revoking_its_active_approval(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+    await pg_connection.execute(
+        text("UPDATE content_workflows SET status = 'approved' WHERE id = :workflow_id"),
+        {"workflow_id": workflow_id},
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "UPDATE approvals SET revoked_at = now() WHERE id = :approval_id",
+        {"approval_id": approval_id},
+        "cannot deactivate approval for approved workflow",
+    )
+
+
+@pytest.mark.asyncio
+async def test_approved_workflow_rejects_deleting_its_active_approval(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+    await pg_connection.execute(
+        text("UPDATE content_workflows SET status = 'approved' WHERE id = :workflow_id"),
+        {"workflow_id": workflow_id},
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "DELETE FROM approvals WHERE id = :approval_id",
+        {"approval_id": approval_id},
+        "cannot deactivate approval for approved workflow",
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_decision_reviewed_at_is_immutable_after_insert(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+
+    result = await pg_connection.execute(
+        text(
+            "SELECT id FROM review_decisions WHERE draft_version_id = :draft_id "
+            "AND owner_id = 101"
+        ),
+        {"draft_id": draft_id},
+    )
+    review_id = result.scalar_one()
+    assert approval_id is not None
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "UPDATE review_decisions SET reviewed_at = now() + interval '1 day' "
+        "WHERE id = :review_id",
+        {"review_id": review_id},
+        "review_decisions are immutable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduled_job_rejects_a_revoked_approval_on_insert(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+        revoked_at=datetime.now(UTC),
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        """
+        INSERT INTO publication_jobs
+            (id, owner_id, draft_version_id, approval_id, scheduled_at_utc,
+             status, idempotency_key)
+        VALUES
+            (:id, 101, :draft_id, :approval_id, now(), 'scheduled', :idempotency_key)
+        """,
+        {
+            "id": uuid4(),
+            "draft_id": draft_id,
+            "approval_id": approval_id,
+            "idempotency_key": "revoked-approval-insert",
+        },
+        "publication job requires current active approval",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_job_cannot_be_rescheduled_after_approval_revocation(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+    job_id = await _insert_publication_job(
+        pg_connection,
+        owner_id=101,
+        draft_id=draft_id,
+        approval_id=approval_id,
+        status="cancelled",
+    )
+    await pg_connection.execute(
+        text("UPDATE approvals SET revoked_at = now() WHERE id = :approval_id"),
+        {"approval_id": approval_id},
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "UPDATE publication_jobs SET status = 'scheduled' WHERE id = :job_id",
+        {"job_id": job_id},
+        "publication job requires current active approval",
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoking_approval_requires_scheduled_job_to_be_cancelled_first(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+    job_id = await _insert_publication_job(
+        pg_connection,
+        owner_id=101,
+        draft_id=draft_id,
+        approval_id=approval_id,
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "UPDATE approvals SET revoked_at = now() WHERE id = :approval_id",
+        {"approval_id": approval_id},
+        "cannot deactivate approval backing active publication job",
+    )
+    await pg_connection.execute(
+        text("UPDATE publication_jobs SET status = 'cancelled' WHERE id = :job_id"),
+        {"job_id": job_id},
+    )
+    await pg_connection.execute(
+        text("UPDATE approvals SET revoked_at = now() WHERE id = :approval_id"),
+        {"approval_id": approval_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_deleting_approval_requires_scheduled_job_to_be_cancelled_first(
+    pg_connection: AsyncConnection,
+) -> None:
+    workflow_id = await _insert_workflow(pg_connection, owner_id=101)
+    draft_id, body_hash = await _insert_draft(
+        pg_connection, owner_id=101, workflow_id=workflow_id
+    )
+    approval_id = await _insert_review_and_approval(
+        pg_connection,
+        owner_id=101,
+        workflow_id=workflow_id,
+        draft_id=draft_id,
+        body_hash=body_hash,
+    )
+    job_id = await _insert_publication_job(
+        pg_connection,
+        owner_id=101,
+        draft_id=draft_id,
+        approval_id=approval_id,
+    )
+
+    await _assert_statement_is_rejected(
+        pg_connection,
+        "DELETE FROM approvals WHERE id = :approval_id",
+        {"approval_id": approval_id},
+        "cannot deactivate approval backing active publication job",
+    )
+    await pg_connection.execute(
+        text("UPDATE publication_jobs SET status = 'cancelled' WHERE id = :job_id"),
+        {"job_id": job_id},
+    )
+    await pg_connection.execute(
+        text("DELETE FROM approvals WHERE id = :approval_id"),
+        {"approval_id": approval_id},
     )
 
 
