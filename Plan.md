@@ -359,8 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
-| 2026-08-28T18:10:47Z | P0.T3 | b2fd65e+worktree | PostgreSQL focused: 19 passed; upgrade-downgrade-upgrade and DATABASE_URL migration path verified; full pytest: 69 passed; Ruff and strict mypy: clean | Plan.md | Нет |
-| 2026-08-28T17:58:53Z | P0.T3 | b2fd65e+worktree | PostgreSQL focused: 16 passed; migration upgrade-downgrade-upgrade; full pytest: 66 passed; Ruff and strict mypy: clean | Plan.md | Нет |
+| 2026-08-28T18:37:10Z | P0.T3 | 4a9e429+worktree | Fix artifact 4a9e429: focused PostgreSQL 26 passed; Alembic downgrade-upgrade; full pytest 77 passed; Ruff and strict mypy clean; CI fails closed without TEST_DATABASE_URL | Plan.md | Нет |
 | 2026-08-28T15:46:47Z | P0.T3 start | b2fd65e+worktree | baseline pytest: 50 passed; pg_isready 127.0.0.1:55432: accepting connections; PostgreSQL 17.11; public tables: 0 | Plan.md | Статус исправлен на IN_PROGRESS; schema/migrations ещё не реализованы |
 | 2026-08-28T13:22:35Z | P0.T3 | 634104f | docker --version: команда отсутствует; PostgreSQL 17 service: running; port 5433: listening; psql без пароля: authentication rejected | Plan.md | Нужен локальный TEST_DATABASE_URL к отдельной тестовой БД; секрет не передавать в чат |
 | 2026-08-28T13:14:28Z | P0.T2 | f157e1c+worktree | pytest: 50 passed including 32 domain/property tests; ruff: passed; mypy: passed; plan validation and diff check: passed | Plan.md | Нет |
