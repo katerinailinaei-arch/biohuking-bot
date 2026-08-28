@@ -1,6 +1,6 @@
 # «Бодрые люди»: безопасное редакционное ядро — план реализации
 
-> **УСТАРЕЛО — НЕ ПРОДОЛЖАТЬ.** План основан на прежней спецификации и содержит удалённый scope. Неизменённая копия сохранена в `docs/archive/2026-08-28-pre-mvp-cleanup/legacy-plan-2026-08-27.md`. Сначала нужна новая спецификация по `docs/discovery/2026-08-28-pre-spec-decisions.md`.
+> **УСТАРЕЛО — НЕ ПРОДОЛЖАТЬ.** План основан на прежней спецификации и содержит удалённый scope. Неизменённая копия сохранена в `docs/archive/2026-08-28-pre-mvp-cleanup/legacy-plan-2026-08-27.md`. Рабочая спецификация: `docs/superpowers/specs/2026-08-28-bodrye-lyudi-mvp-design.md`; для неё потребуется новый implementation plan.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
