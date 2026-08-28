@@ -4,14 +4,28 @@
 
 ## Текущее состояние
 
-Реализация идёт по [Plan.md](Plan.md). На текущем шаге доступны только валидация и атомарное обновление живого плана; application scaffold появится в P0.T1.
+Реализация идёт по [Plan.md](Plan.md). Создан Python 3.12 application scaffold со строгой конфигурацией и автоматическими quality gates. Бот и worker появятся в следующих задачах плана.
 
-## Проверка и обновление Plan.md
+## Локальная установка
+
+```powershell
+Copy-Item .env.example .env
+python -m pip install --upgrade "pip>=25.1"
+python -m pip install -e . --group dev
+```
+
+Заполните обязательные значения `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, `TELEGRAM_CHANNEL_ID` и `GROQ_API_KEY` в локальном `.env`. Секреты нельзя коммитить или отправлять в Telegram.
+
+## Проверки
 
 ```powershell
 python scripts/check_plan.py Plan.md
-python -m unittest discover -s tests/unit/scripts -p "test_*.py" -v
+python -m ruff check .
+python -m mypy src evals
+python -m pytest -v
 ```
+
+## Проверка и обновление Plan.md
 
 После свежих проверок задача или фаза закрывается одной из команд:
 

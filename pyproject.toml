@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bodrye-bot"
+version = "0.1.0"
+description = "Private evidence-first Telegram editorial agent for Bodrye Lyudi"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiogram>=3.20,<4",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "alembic>=1.15,<2",
+  "asyncpg>=0.30,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.9,<3",
+  "httpx>=0.28,<1",
+  "structlog>=25,<26",
+  "openai>=1.100,<3",
+  "feedparser>=6.0,<7",
+  "bleach>=6.2,<7",
+  "boto3>=1.40,<2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "hypothesis>=6.138,<7",
+  "ruff>=0.12,<1",
+  "mypy>=1.17,<2",
+  "testcontainers[postgres]>=4.12,<5",
+  "types-boto3>=1.40,<2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+

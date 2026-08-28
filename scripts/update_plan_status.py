@@ -108,7 +108,7 @@ def complete_task(content: str, target: str, evidence: str, plan_path: Path) -> 
     heading = re.compile(
         rf"^(#### {re.escape(target)}\..+ — )[^\r\n]+$", re.MULTILINE
     )
-    updated, heading_count = heading.subn(rf"\g<1>✅ DONE", content, count=1)
+    updated, heading_count = heading.subn(r"\g<1>✅ DONE", content, count=1)
     if heading_count != 1:
         raise PlanValidationError(f"Не найден heading {target}")
     checkbox = f"- [ ] **{target} завершена и имеет evidence.**"

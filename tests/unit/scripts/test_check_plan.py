@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
-import os
 from pathlib import Path
 
 from tests.unit.scripts.plan_fixture import build_plan
-
 
 ROOT = Path(__file__).resolve().parents[3]
 CHECKER = ROOT / "scripts" / "check_plan.py"

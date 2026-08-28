@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
-import os
 from pathlib import Path
 
 from tests.unit.scripts.plan_fixture import TASKS_BY_PHASE, build_plan
-
 
 ROOT = Path(__file__).resolve().parents[3]
 UPDATER = ROOT / "scripts" / "update_plan_status.py"

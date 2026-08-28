@@ -6,7 +6,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 TASKS_BY_PHASE: dict[int, tuple[int, ...]] = {
     0: (0, 1, 2, 3, 4),
     1: (5, 6, 7),

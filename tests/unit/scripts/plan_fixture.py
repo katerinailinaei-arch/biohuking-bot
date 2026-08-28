@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-
 TASKS_BY_PHASE: dict[int, tuple[int, ...]] = {
     0: (0, 1, 2, 3, 4),
     1: (5, 6, 7),
@@ -50,21 +49,24 @@ def build_plan(
     )
     for phase in TASKS_BY_PHASE:
         status = statuses.get(phase, "⬜ NOT_STARTED")
-        lines.append(f"| P{phase} | Plan {phase} | Ещё не выполнено | {status} | Gate P{phase - 1 if phase else 0} |")
+        blocker = f"Gate P{phase - 1 if phase else 0}"
+        lines.append(f"| P{phase} | Plan {phase} | Ещё не выполнено | {status} | {blocker} |")
 
     lines.extend(
         (
             "",
             "### 7.3. Формат evidence journal",
             "",
-            "| UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |",
+            "| UTC date | Task/Phase | Commit | Commands and result "
+            "| Evidence artifact | Limitations |",
             "|---|---|---|---|---|---|",
         )
     )
     for task in sorted(evidence):
         phase = next(phase for phase, tasks in TASKS_BY_PHASE.items() if task in tasks)
         lines.append(
-            f"| 2026-08-28T12:00:00Z | P{phase}.T{task} | abc1234 | tests passed | test-report | Нет |"
+            f"| 2026-08-28T12:00:00Z | P{phase}.T{task} | abc1234 "
+            "| tests passed | test-report | Нет |"
         )
     lines.extend(("| — | — | — | — | — | — |", ""))
     return "\n".join(lines)

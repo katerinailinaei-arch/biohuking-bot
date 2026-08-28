@@ -61,9 +61,9 @@
 - **Зависит от:** нет.
 - **Результат:** CI и локальная команда отвергают некорректный или бездоказательно «закрытый» план.
 
-#### P0.T1. Скаффолд, config, CI и threat fixtures — ⬜ NOT_STARTED
+#### P0.T1. Скаффолд, config, CI и threat fixtures — ✅ DONE
 
-- [ ] **P0.T1 завершена и имеет evidence.**
+- [x] **P0.T1 завершена и имеет evidence.**
 - **Файлы:** create `pyproject.toml`, `.env.example`, `.gitignore`, `README.md`, `.github/workflows/ci.yml`, `src/bodrye_bot/__init__.py`, `src/bodrye_bot/config.py`, `evals/__init__.py`, `tests/unit/test_config.py`, `tests/architecture/test_scope.py`, `tests/security/fixtures/*`.
 - **Тесты:** Python 3.12+, strict config, SecretStr, hard/soft budget, OpenAI disabled by default, banned MVP imports/scope, clean install and CI commands.
 - **Зависит от:** P0.T0.
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0 | 🟡 IN_PROGRESS | Нет |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1 | 🟡 IN_PROGRESS | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,6 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-28T13:07:44Z | P0.T1 | 28b4684+worktree | pytest: 18 passed; ruff: passed; mypy: passed; clean install: passed; plan validation and diff check: passed | Plan.md | Нет |
 | 2026-08-28T12:49:53Z | P0.T0 | 327cfc5+worktree | python -m unittest discover -s tests/unit/scripts -p test_*.py -v: 8 passed; python scripts/check_plan.py Plan.md: PLAN_OK phases=8 tasks=18; git diff --check: exit 0 | Plan.md | Нет |
 
 ## 8. Definition of Done фазы
