@@ -107,9 +107,9 @@
 - **Зависит от:** Gate P0.
 - **Результат:** AC-01, AC-02, AC-17 доказаны через tests.
 
-#### P1.T6. Typed LLM contract, retries, Groq/OpenAI adapters, usage — ⬜ NOT_STARTED
+#### P1.T6. Typed LLM contract, retries, Groq/OpenAI adapters, usage — ✅ DONE
 
-- [ ] **P1.T6 завершена и имеет evidence.**
+- [x] **P1.T6 завершена и имеет evidence.**
 - **Файлы:** create `ports/llm.py`, `providers/llm_base.py`, `providers/groq.py`, `providers/openai.py`, `operations/usage.py`; tests `tests/contract/test_llm_contract.py`, `tests/unit/providers/test_retry.py`, `test_schema_validation.py`, `test_safe_errors.py`.
 - **Тесты:** same normalized semantics, malformed JSON, extra field, wrong enum, refusal, 429, quota exhausted, 5xx, timeout, retry count, single repair, no paid fallback, usage/redaction.
 - **Зависит от:** P1.T5.
@@ -330,7 +330,7 @@ all gates ───────────────────────�
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
-| P1 | T5–T7: owner Telegram, LLM adapters, eval | Выполнено: P1.T5 | 🟡 IN_PROGRESS | Нет |
+| P1 | T5–T7: owner Telegram, LLM adapters, eval | Выполнено: P1.T5, P1.T6 | 🟡 IN_PROGRESS | Нет |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
@@ -359,6 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-29T19:27:50Z | P1.T6 | cee3df1+worktree | Commits 41f8a6a..cee3df1; independent review PASS; strict provider-neutral Groq/OpenAI contract, definite-safe retries, quota circuit, one safe schema repair, Russian SafeError UX, redacted aggregate usage, OpenAI fail-closed; full pytest 182 passed in 36.83s; Ruff clean; strict mypy clean (39 files). | Plan.md | Нет |
 | 2026-08-29T14:21:18Z | P1.T5 | d6077fb+worktree | Commits 025ecef..d6077fb; independent review PASS; owner-first Telegram shell, signed opaque callbacks, Russian safe errors, owner-bound sensitive input with autonomous TTL, five onboarding gates; full pytest 128 passed in 26.13s; Ruff clean; strict mypy clean (33 files). | Plan.md | Нет |
 | 2026-08-29T12:44:39Z | P0 | 38556bd+worktree | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | Plan.md | Нет |
 | 2026-08-29T12:43:27Z | P0.T4 | 38556bd+worktree | Independent review PASS; P0.T4 28 passed; full pytest 105 passed; Ruff, strict mypy, Alembic check and migration round-trip passed; app+DB audit envelope, append-only linkage, owner-scoped hydration/save verified | Plan.md | Нет |
