@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -51,6 +53,7 @@ class SensitiveInputGuard:
         self._ttl = ttl
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._transient: dict[str, _TransientPayload] = {}
+        self._expiration_handles: dict[str, asyncio.TimerHandle] = {}
         self._permanent: dict[str, _PermanentPayload] = {}
 
     async def inspect(self, owner_id: int, payload: str) -> SensitiveInspection:
@@ -58,11 +61,13 @@ class SensitiveInputGuard:
         self._purge_expired()
         transient_id = uuid4().hex
         if _SENSITIVE_PATTERN.search(payload):
-            self._transient[transient_id] = _TransientPayload(
+            transient = _TransientPayload(
                 owner_id=owner_id,
                 payload=payload,
                 expires_at=self._clock() + self._ttl,
             )
+            self._transient[transient_id] = transient
+            self._schedule_expiration(transient_id, transient.expires_at)
             return SensitiveInspection(
                 transient_id=transient_id,
                 requires_confirmation=True,
@@ -94,7 +99,7 @@ class SensitiveInputGuard:
         self._purge_expired()
         transient = self._transient.get(transient_id)
         if transient is not None and transient.owner_id == owner_id:
-            self._transient.pop(transient_id, None)
+            self._discard_transient(transient_id)
 
     async def transient_payload(self, owner_id: int, transient_id: str) -> str | None:
         self._owner_guard.authorize(owner_id)
@@ -123,7 +128,7 @@ class SensitiveInputGuard:
             or transient.expires_at <= self._clock()
         ):
             return None
-        self._transient.pop(transient_id, None)
+        self._discard_transient(transient_id)
         return transient
 
     def _purge_expired(self) -> int:
@@ -134,8 +139,37 @@ class SensitiveInputGuard:
             if transient.expires_at <= now
         ]
         for transient_id in expired_ids:
-            self._transient.pop(transient_id, None)
+            self._discard_transient(transient_id)
         return len(expired_ids)
+
+    def _schedule_expiration(self, transient_id: str, expires_at: datetime) -> None:
+        delay = max(0.0, (expires_at - self._clock()).total_seconds())
+        guard_ref = weakref.ref(self)
+        handle = asyncio.get_running_loop().call_later(
+            delay, _expire_transient, guard_ref, transient_id
+        )
+        previous = self._expiration_handles.pop(transient_id, None)
+        if previous is not None:
+            previous.cancel()
+        self._expiration_handles[transient_id] = handle
+
+    def _expire_transient(self, transient_id: str) -> None:
+        self._expiration_handles.pop(transient_id, None)
+        self._transient.pop(transient_id, None)
+
+    def _discard_transient(self, transient_id: str) -> None:
+        self._transient.pop(transient_id, None)
+        handle = self._expiration_handles.pop(transient_id, None)
+        if handle is not None:
+            handle.cancel()
+
+
+def _expire_transient(
+    guard_ref: weakref.ReferenceType[SensitiveInputGuard], transient_id: str
+) -> None:
+    guard = guard_ref()
+    if guard is not None:
+        guard._expire_transient(transient_id)
 
 
 __all__ = ["SENSITIVE_CONFIRMATION_TEXT", "SensitiveInputGuard", "SensitiveInspection"]

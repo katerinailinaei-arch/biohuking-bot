@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -84,6 +85,18 @@ async def test_purge_expired_removes_raw_payload_without_confirmation() -> None:
     clock.now = now + timedelta(seconds=1)
     assert await service.purge_expired() == 1
     assert await service.transient_payload(42, result.transient_id) is None
+    assert raw_payload not in repr(service._transient)
+
+
+@pytest.mark.asyncio
+async def test_sensitive_payload_expires_autonomously_without_another_guard_call() -> None:
+    raw_payload = "Диагноз и анализ крови: автономное удаление"
+    service = SensitiveInputGuard(OwnerGuard(42), ttl=timedelta(milliseconds=25))
+    result = await service.inspect(42, raw_payload)
+
+    await asyncio.sleep(0.15)
+
+    assert result.transient_id not in service._transient
     assert raw_payload not in repr(service._transient)
 
 
