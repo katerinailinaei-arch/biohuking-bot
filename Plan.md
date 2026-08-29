@@ -115,15 +115,15 @@
 - **Зависит от:** P1.T5.
 - **Результат:** provider failure выходит только как typed SafeError; сохранённый workflow не теряется.
 
-#### P1.T7. Versioned model/style/safety eval gate — ⬜ NOT_STARTED
+#### P1.T7. Versioned model/style/safety eval gate — ✅ DONE
 
-- [ ] **P1.T7 завершена и имеет evidence.**
+- [x] **P1.T7 завершена и имеет evidence.**
 - **Файлы:** create `evals/dataset.jsonl`, `evals/run.py`, `evals/report.py`, `src/bodrye_bot/operations/model_activation.py`; tests `tests/unit/evals/test_report.py`, `tests/e2e/test_model_activation.py`.
 - **Тесты:** 100% hard safety fixtures, schema validity, blind style scoring, latency/tokens, model/prompt/schema versions, activation rollback.
 - **Зависит от:** P1.T6.
 - **Результат:** непрошедшая модель не активируется; AC-13 и провайдерная часть AC-14/AC-18 доказаны.
 
-**Gate P1:** unauthorized reads/writes = 0; оба adapter contract suites зелёны; malformed/refusal/timeout/quota fixtures дают безопасный Russian UX; hard eval fixtures = 100%; OpenAI не активен по умолчанию.
+**Gate P1 — ✅ PASS:** P1.T5–P1.T7 = DONE; независимые проверки = PASS; unauthorized reads/writes = 0; оба adapter contract suites зелёны; malformed/refusal/timeout/quota fixtures дают безопасный Russian UX; hard eval fixtures = 100%; OpenAI не активен по умолчанию. Full pytest, focused owner/provider/eval gate, offline fake eval, Ruff, strict mypy и `check_plan.py` вышли с code 0; evidence записан в журнале ниже.
 
 ### P2. Воспроизводимый стиль канала
 
@@ -330,7 +330,7 @@ all gates ───────────────────────�
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
-| P1 | T5–T7: owner Telegram, LLM adapters, eval | Выполнено: P1.T5, P1.T6 | 🟡 IN_PROGRESS | Нет |
+| P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
@@ -359,6 +359,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-29T20:19:39Z | P1 | 9afd740+worktree | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | Plan.md | Нет |
+| 2026-08-29T20:19:39Z | P1.T7 | 9afd740+worktree | Commits ff72cc4..9afd740; independent review PASS; strict 12-case versioned dataset, deterministic offline report, typed LLMProvider adapter, fail-closed exact-fixture activation and immutable rollback audit; focused eval 35 passed; fake CLI 12/12, schemas 100%, hard violations 0, safety 1.0, deterministic SHA 86839D...37D04. | Plan.md | Нет |
 | 2026-08-29T19:27:50Z | P1.T6 | cee3df1+worktree | Commits 41f8a6a..cee3df1; independent review PASS; strict provider-neutral Groq/OpenAI contract, definite-safe retries, quota circuit, one safe schema repair, Russian SafeError UX, redacted aggregate usage, OpenAI fail-closed; full pytest 182 passed in 36.83s; Ruff clean; strict mypy clean (39 files). | Plan.md | Нет |
 | 2026-08-29T14:21:18Z | P1.T5 | d6077fb+worktree | Commits 025ecef..d6077fb; independent review PASS; owner-first Telegram shell, signed opaque callbacks, Russian safe errors, owner-bound sensitive input with autonomous TTL, five onboarding gates; full pytest 128 passed in 26.13s; Ruff clean; strict mypy clean (33 files). | Plan.md | Нет |
 | 2026-08-29T12:44:39Z | P0 | 38556bd+worktree | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | Plan.md | Нет |
