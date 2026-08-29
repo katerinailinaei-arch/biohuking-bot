@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bodrye_bot.db.models import Approval, ContentWorkflow, DraftVersion, ReviewDecision
 from bodrye_bot.db.uow import ConcurrentUpdate, SqlAlchemyUnitOfWork
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
-from bodrye_bot.domain.workflow import WorkflowStatus
+from bodrye_bot.domain.workflow import Actor, WorkflowPolicy, WorkflowStatus
 from bodrye_bot.operations.audit import AuditEventType
 
 
@@ -141,3 +143,115 @@ async def test_state_save_and_its_audit_event_commit_together(
     assert stored.status is WorkflowStatus.EXTRACTED
     assert stored.version == 2
     assert [event.event_type for event in events] == [AuditEventType.WORKFLOW_STATE_CHANGED]
+
+
+@pytest.mark.asyncio
+async def test_repository_hydrates_current_review_and_active_approval_state(
+    uow_factory: SqlAlchemyUnitOfWork, seeded_workflow: object
+) -> None:
+    workflow_id = seeded_workflow.id
+    draft_id = uuid4()
+    body_hash = "a" * 64
+    now = datetime.now(UTC)
+    async with uow_factory as uow:
+        uow.session.add(
+            DraftVersion(
+                id=draft_id,
+                owner_id=42,
+                workflow_id=workflow_id,
+                version_number=1,
+                body="Проверенный текст",
+                body_hash=body_hash,
+                format="medium",
+                headlines=[],
+                public_sources=[],
+                style_profile_version=1,
+            )
+        )
+        await uow.session.flush()
+        stored_workflow = await uow.session.get(ContentWorkflow, workflow_id)
+        assert stored_workflow is not None
+        stored_workflow.current_version_id = draft_id
+        await uow.session.flush()
+        uow.session.add(
+            ReviewDecision(
+                owner_id=42,
+                draft_version_id=draft_id,
+                status="passed",
+                blocking_reasons=[],
+                changed_claim_ids=[],
+                reviewed_at=now,
+                policy_version="medical-v1",
+            )
+        )
+        await uow.session.flush()
+        uow.session.add(
+            Approval(
+                owner_id=42,
+                workflow_id=workflow_id,
+                draft_version_id=draft_id,
+                content_hash=body_hash,
+                approved_by=Actor.OWNER,
+                approved_at=now,
+            )
+        )
+        await uow.session.flush()
+        stored_workflow.status = WorkflowStatus.APPROVED
+        await uow.commit()
+
+    async with uow_factory as uow:
+        hydrated = await uow.workflows.get(42, workflow_id)
+
+    assert hydrated.current_version_id == str(draft_id)
+    assert hydrated.current_hash == body_hash
+    assert hydrated.review_version_id == str(draft_id)
+    assert hydrated.review_hash == body_hash
+    assert hydrated.approval_version_id == str(draft_id)
+    assert hydrated.approval_hash == body_hash
+    assert WorkflowPolicy().transition(
+        hydrated, WorkflowStatus.SCHEDULED, Actor.OWNER
+    ).status is WorkflowStatus.SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_repository_save_persists_the_selected_current_draft(
+    uow_factory: SqlAlchemyUnitOfWork, seeded_workflow: object
+) -> None:
+    workflow_id = seeded_workflow.id
+    draft_id = uuid4()
+    body_hash = "b" * 64
+    async with uow_factory as uow:
+        uow.session.add(
+            DraftVersion(
+                id=draft_id,
+                owner_id=42,
+                workflow_id=workflow_id,
+                version_number=1,
+                body="Новая версия",
+                body_hash=body_hash,
+                format="medium",
+                headlines=[],
+                public_sources=[],
+                style_profile_version=1,
+            )
+        )
+        await uow.commit()
+
+    async with uow_factory as uow:
+        state = await uow.workflows.get(42, workflow_id)
+        await uow.workflows.save(
+            replace(
+                state,
+                status=WorkflowStatus.EXTRACTED,
+                current_version_id=str(draft_id),
+                current_hash=body_hash,
+            ),
+            expected_version=1,
+        )
+        await uow.commit()
+
+    async with uow_factory as uow:
+        persisted = await uow.workflows.get(42, workflow_id)
+
+    assert persisted.current_version_id == str(draft_id)
+    assert persisted.current_hash == body_hash

@@ -93,7 +93,7 @@
 - **Зависит от:** P0.T3.
 - **Результат:** все repositories требуют `owner_id`, каждая мутация аудируется.
 
-**Gate P0:** P0.T0–P0.T4 = DONE; `python scripts/check_plan.py Plan.md`, `python -m ruff check .`, `python -m mypy src evals`, full existing pytest и PostgreSQL migration round trip вышли с code 0; owner/audit нарушений 0.
+**Gate P0 — ✅ PASS:** P0.T0–P0.T4 = DONE; независимая проверка = PASS; `python scripts/check_plan.py Plan.md`, `python -m ruff check .`, `python -m mypy src evals`, full existing pytest и PostgreSQL migration round trip вышли с code 0; owner/audit нарушений 0. Evidence записан в журнале ниже.
 
 ### P1. Безопасный Telegram shell и провайдер
 
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2, P0.T3, P0.T4 | 🟡 IN_PROGRESS | Нет |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,6 +359,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-29T12:44:39Z | P0 | 38556bd+worktree | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | Plan.md | Нет |
+| 2026-08-29T12:43:27Z | P0.T4 | 38556bd+worktree | Independent review PASS; P0.T4 28 passed; full pytest 105 passed; Ruff, strict mypy, Alembic check and migration round-trip passed; app+DB audit envelope, append-only linkage, owner-scoped hydration/save verified | Plan.md | Нет |
 | 2026-08-29T07:58:00Z | P0.T4 | 236b28d+worktree | TDD RED: 3 import errors, then nested mutation/TRUNCATE/unknown-event constraints failed; focused P0 PostgreSQL: 48 passed; full pytest: 98 passed; Ruff and strict mypy: clean; Alembic 0001→0002 downgrade-upgrade and check: passed; append-only audit and persisted recursive redaction verified | Plan.md | PostgreSQL 17.11 локально; PostgreSQL 16 проверяется CI после push |
 | 2026-08-28T18:52:28Z | P0.T4 start | 236b28d+worktree | baseline full pytest: 77 passed; branch synced with origin/feature/p0-foundation; PostgreSQL test database available | Plan.md | Реализация repositories/UoW/audit ещё не начата |
 | 2026-08-28T18:37:10Z | P0.T3 | 4a9e429+worktree | Fix artifact 4a9e429: focused PostgreSQL 26 passed; Alembic downgrade-upgrade; full pytest 77 passed; Ruff and strict mypy clean; CI fails closed without TEST_DATABASE_URL | Plan.md | Нет |

@@ -58,6 +58,31 @@ def test_unknown_application_event_type_is_rejected_without_echoing_payload() ->
     assert raw_event_type not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    (
+        ("object_type", "raw_source_secret"),
+        ("trace_id", "sk-testsecret1234567890"),
+    ),
+)
+def test_audit_envelope_rejects_unbounded_or_sensitive_values_without_echoing_them(
+    field_name: str, field_value: str
+) -> None:
+    values = {
+        "owner_id": 42,
+        "event_type": AuditEventType.CONFIGURATION_CHANGED,
+        "actor": Actor.SYSTEM,
+        "object_type": "workflow",
+        "trace_id": "1" * 32,
+    }
+    values[field_name] = field_value
+
+    with pytest.raises(ValueError, match="Unsupported audit envelope") as caught:
+        AuditEntry(**values)
+
+    assert field_value not in str(caught.value)
+
+
 def test_redact_metadata_drops_sensitive_alias_keys_recursively() -> None:
     cleaned = redact_metadata(
         {
@@ -295,6 +320,91 @@ async def test_nested_trigger_cannot_bypass_append_only_audit(
 
 
 @pytest.mark.asyncio
+async def test_nested_trigger_cannot_unlink_audit_from_existing_workflow(
+    uow_factory: SqlAlchemyUnitOfWork, seeded_workflow: object
+) -> None:
+    event_id = uuid4()
+    workflow_id = seeded_workflow.id
+    async with uow_factory as uow:
+        await uow.audit.record(
+            AuditEntry(
+                id=event_id,
+                owner_id=42,
+                workflow_id=workflow_id,
+                event_type=AuditEventType.WORKFLOW_STATE_CHANGED,
+                actor=Actor.SYSTEM,
+                object_type="workflow",
+                object_id=workflow_id,
+                metadata={"reason_code": "original"},
+            )
+        )
+        await uow.commit()
+
+    async with uow_factory as uow:
+        await uow.session.execute(
+            text(
+                """
+                CREATE FUNCTION task4_try_unlink_audit()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    UPDATE audit_events
+                    SET workflow_id = NULL
+                    WHERE id = :event_id;
+                    RETURN NEW;
+                END;
+                $$
+                """.replace(":event_id", f"'{event_id}'")
+            )
+        )
+        await uow.session.execute(
+            text(
+                """
+                CREATE TRIGGER task4_nested_audit_unlink
+                AFTER UPDATE ON content_workflows
+                FOR EACH ROW EXECUTE FUNCTION task4_try_unlink_audit()
+                """
+            )
+        )
+        await uow.commit()
+
+    try:
+        async with uow_factory as uow:
+            with pytest.raises(DBAPIError, match="audit_events are append-only"):
+                await uow.session.execute(
+                    text(
+                        """
+                        UPDATE content_workflows
+                        SET recommended_format = 'short'
+                        WHERE id = :workflow_id AND owner_id = 42
+                        """
+                    ),
+                    {"workflow_id": workflow_id},
+                )
+            await uow.rollback()
+    finally:
+        async with uow_factory as uow:
+            await uow.session.execute(
+                text(
+                    "DROP TRIGGER IF EXISTS task4_nested_audit_unlink "
+                    "ON content_workflows"
+                )
+            )
+            await uow.session.execute(text("DROP FUNCTION IF EXISTS task4_try_unlink_audit()"))
+            await uow.commit()
+
+    async with uow_factory as uow:
+        persisted_workflow_id = await uow.session.scalar(
+            select(AuditEvent.workflow_id).where(
+                AuditEvent.id == event_id, AuditEvent.owner_id == 42
+            )
+        )
+
+    assert persisted_workflow_id == workflow_id
+
+
+@pytest.mark.asyncio
 async def test_audit_table_cannot_be_truncated(
     uow_factory: SqlAlchemyUnitOfWork,
 ) -> None:
@@ -320,5 +430,37 @@ async def test_database_rejects_unknown_audit_event_type(
                     """
                 ),
                 {"id": uuid4()},
+            )
+        await uow.rollback()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("object_type", "trace_id", "constraint_name"),
+    (
+        ("raw_source_secret", "1" * 32, "ck_audit_object_type_known"),
+        ("workflow", "sk-testsecret1234567890", "ck_audit_trace_id_safe"),
+    ),
+)
+async def test_database_rejects_unsafe_audit_envelope_fields(
+    uow_factory: SqlAlchemyUnitOfWork,
+    object_type: str,
+    trace_id: str,
+    constraint_name: str,
+) -> None:
+    async with uow_factory as uow:
+        with pytest.raises(DBAPIError, match=constraint_name):
+            await uow.session.execute(
+                text(
+                    """
+                    INSERT INTO audit_events
+                        (id, owner_id, event_type, actor, object_type,
+                         trace_id, metadata_json)
+                    VALUES
+                        (:id, 42, 'configuration.changed', 'system',
+                         :object_type, :trace_id, '{}')
+                    """
+                ),
+                {"id": uuid4(), "object_type": object_type, "trace_id": trace_id},
             )
         await uow.rollback()

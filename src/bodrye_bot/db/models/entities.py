@@ -618,6 +618,17 @@ class AuditEvent(OwnedRecord, Base):
             ")",
             name="audit_event_type_known",
         ),
+        CheckConstraint(
+            "object_type IN ("
+            "'workflow', 'configuration', 'style_rule', 'approval', "
+            "'schedule', 'deletion', 'delivery', 'backup'"
+            ")",
+            name="audit_object_type_known",
+        ),
+        CheckConstraint(
+            "trace_id IS NULL OR trace_id ~ '^[0-9a-f]{32}$'",
+            name="audit_trace_id_safe",
+        ),
     )
 
     workflow_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)

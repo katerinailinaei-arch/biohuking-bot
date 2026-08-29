@@ -66,6 +66,7 @@ _SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b"),
 )
 _DROP = object()
+_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class AuditEventType(StrEnum):
@@ -79,12 +80,23 @@ class AuditEventType(StrEnum):
     BACKUP_RESULT_RECORDED = "operations.backup_result_recorded"
 
 
+class AuditObjectType(StrEnum):
+    WORKFLOW = "workflow"
+    CONFIGURATION = "configuration"
+    STYLE_RULE = "style_rule"
+    APPROVAL = "approval"
+    SCHEDULE = "schedule"
+    DELETION = "deletion"
+    DELIVERY = "delivery"
+    BACKUP = "backup"
+
+
 @dataclass(frozen=True)
 class AuditEntry:
     owner_id: int
     event_type: AuditEventType
     actor: Actor
-    object_type: str
+    object_type: AuditObjectType
     id: UUID = field(default_factory=uuid4)
     workflow_id: UUID | None = None
     object_id: UUID | None = None
@@ -94,6 +106,16 @@ class AuditEntry:
     def __post_init__(self) -> None:
         if not isinstance(self.event_type, AuditEventType):
             raise ValueError("Unsupported audit event type")
+        try:
+            object_type = AuditObjectType(self.object_type)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Unsupported audit envelope") from exc
+        object.__setattr__(self, "object_type", object_type)
+        if self.trace_id is not None and (
+            _TRACE_ID_PATTERN.fullmatch(self.trace_id) is None
+            or _contains_sensitive_value(self.trace_id)
+        ):
+            raise ValueError("Unsupported audit envelope")
 
 
 def redact_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
@@ -184,7 +206,7 @@ class SqlAlchemyAuditWriter:
                 workflow_id=event.workflow_id,
                 event_type=event.event_type.value,
                 actor=event.actor,
-                object_type=event.object_type,
+                object_type=event.object_type.value,
                 object_id=event.object_id,
                 trace_id=event.trace_id,
                 metadata_json=redact_metadata(event.metadata),
@@ -206,7 +228,7 @@ class SqlAlchemyAuditWriter:
                 workflow_id=event.workflow_id,
                 event_type=AuditEventType(event.event_type),
                 actor=event.actor,
-                object_type=event.object_type,
+                object_type=AuditObjectType(event.object_type),
                 object_id=event.object_id,
                 trace_id=event.trace_id,
                 metadata=event.metadata_json,
@@ -215,4 +237,10 @@ class SqlAlchemyAuditWriter:
         ]
 
 
-__all__ = ["AuditEntry", "AuditEventType", "SqlAlchemyAuditWriter", "redact_metadata"]
+__all__ = [
+    "AuditEntry",
+    "AuditEventType",
+    "AuditObjectType",
+    "SqlAlchemyAuditWriter",
+    "redact_metadata",
+]
