@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -147,6 +148,16 @@ def test_upgrade_downgrade_upgrade_round_trip() -> None:
     command.upgrade(config, "head")
     tables_after_second_upgrade, _ = _snapshot()
     assert tables_after_second_upgrade - {"alembic_version"} == REQUIRED_TABLES
+
+
+def test_alembic_preserves_existing_application_logger() -> None:
+    importlib.import_module("bodrye_bot.telegram.router")
+    application_logger = logging.getLogger("bodrye_bot.telegram.router")
+    application_logger.disabled = False
+
+    command.upgrade(_alembic_config(), "head")
+
+    assert application_logger.disabled is False
 
 
 def test_alembic_uses_database_url_from_environment(
