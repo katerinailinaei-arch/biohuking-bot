@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.style import EditObservation, RuleScope, RuleStatus, StyleRule
 from bodrye_bot.identity.service import OwnerGuard
 
@@ -30,6 +31,17 @@ class StyleRuleRepository(Protocol):
     ) -> list[StyleRule]: ...
 
     async def record_audit(self, *, action: str, rule_id: UUID) -> None: ...
+
+    async def confirm_and_supersede(
+        self,
+        *,
+        owner_id: int,
+        proposal: StyleRule,
+        conflict: StyleRule | None,
+        confirmed_at: datetime,
+    ) -> StyleRule:
+        """Atomically persist activation, any supersession, and both audit entries."""
+        ...
 
 
 class StyleLearningService:
@@ -61,16 +73,20 @@ class StyleLearningService:
             pattern_key=edit.pattern_key,
         )
         if existing is not None:
+            _validate_rule(existing, owner_id=owner_id, profile_id=edit.profile_id)
             return existing
         proposal = StyleRule(
             id=uuid4(),
             owner_id=owner_id,
             profile_id=edit.profile_id,
-            scope=RuleScope.FORMAT,
+            scope=edit.scope,
             text=edit.rule_text,
             origin=("explicit_remember" if edit.explicit_remember else "repeated_edit"),
             pattern_key=edit.pattern_key,
             status=RuleStatus.PROPOSED,
+            format=edit.format,
+            risks=edit.risks,
+            tags=edit.tags,
         )
         await self._repository.add(proposal)
         return proposal
@@ -79,9 +95,12 @@ class StyleLearningService:
         self, *, owner_id: int, profile_id: UUID
     ) -> list[StyleRule]:
         self._owner_guard.authorize(owner_id)
-        return await self._repository.active_rules(
+        rules = await self._repository.active_rules(
             owner_id=owner_id, profile_id=profile_id
         )
+        for rule in rules:
+            _validate_rule(rule, owner_id=owner_id, profile_id=profile_id)
+        return rules
 
     async def confirm_rule(
         self,
@@ -92,34 +111,51 @@ class StyleLearningService:
     ) -> StyleRule:
         self._owner_guard.authorize(owner_id)
         proposal = await self._repository.get(owner_id=owner_id, rule_id=rule_id)
+        _validate_rule(proposal, owner_id=owner_id)
         if proposal.status is not RuleStatus.PROPOSED:
-            raise ValueError("Only proposed rules can be confirmed")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+        conflict: StyleRule | None = None
         if conflict_rule_id is not None:
             conflict = await self._repository.get(
                 owner_id=owner_id, rule_id=conflict_rule_id
             )
+            _validate_rule(conflict, owner_id=owner_id, profile_id=proposal.profile_id)
             if conflict.status is not RuleStatus.ACTIVE:
-                raise ValueError("Only active rules can be superseded")
-            superseded = replace(conflict, status=RuleStatus.SUPERSEDED)
-            await self._repository.save(superseded)
-            await self._repository.record_audit(
-                action="superseded", rule_id=superseded.id
-            )
-        confirmed = replace(
-            proposal,
-            status=RuleStatus.ACTIVE,
+                raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+            if conflict.scope is not proposal.scope:
+                raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+            if (
+                proposal.scope is RuleScope.FORMAT
+                and conflict.format != proposal.format
+            ):
+                raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+        confirmed = await self._repository.confirm_and_supersede(
+            owner_id=owner_id,
+            proposal=proposal,
+            conflict=conflict,
             confirmed_at=self._clock(),
         )
-        await self._repository.save(confirmed)
-        await self._repository.record_audit(action="confirmed", rule_id=confirmed.id)
+        _validate_rule(confirmed, owner_id=owner_id, profile_id=proposal.profile_id)
+        if confirmed.status is not RuleStatus.ACTIVE or confirmed.confirmed_at is None:
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         return confirmed
 
     async def reject_rule(self, *, owner_id: int, rule_id: UUID) -> StyleRule:
         self._owner_guard.authorize(owner_id)
         proposal = await self._repository.get(owner_id=owner_id, rule_id=rule_id)
+        _validate_rule(proposal, owner_id=owner_id)
         if proposal.status is not RuleStatus.PROPOSED:
-            raise ValueError("Only proposed rules can be rejected")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
         rejected = replace(proposal, status=RuleStatus.REJECTED)
         await self._repository.save(rejected)
         await self._repository.record_audit(action="rejected", rule_id=rejected.id)
         return rejected
+
+
+def _validate_rule(
+    rule: StyleRule, *, owner_id: int, profile_id: UUID | None = None
+) -> None:
+    if rule.owner_id != owner_id:
+        raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
+    if profile_id is not None and rule.profile_id != profile_id:
+        raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)

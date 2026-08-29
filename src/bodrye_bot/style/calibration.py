@@ -38,6 +38,10 @@ class CalibrationService:
             raise ValueError("Unknown selected variant")
         if any(index not in indices for index in rejected_variants):
             raise ValueError("Unknown rejected variant")
+        if len(set(rejected_variants)) != len(rejected_variants):
+            raise ValueError("Rejected variants must be unique")
+        if selected_variant is not None and selected_variant in rejected_variants:
+            raise ValueError("A variant cannot be both selected and rejected")
         return CalibrationFeedback(
             topic_id=topic_id,
             selected_variant=selected_variant,

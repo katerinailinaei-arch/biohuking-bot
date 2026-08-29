@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
+from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.style import (
     AngleBrief,
     RuleScope,
@@ -10,6 +11,7 @@ from bodrye_bot.domain.style import (
     StyleContext,
     StyleExample,
     StyleProfile,
+    StyleProfileStatus,
     StyleRule,
 )
 
@@ -46,12 +48,25 @@ class StyleContextBuilder:
             owner_id=self._owner_id, profile_id=profile_id
         )
         if profile.owner_id != self._owner_id:
-            raise ValueError("Profile owner mismatch")
+            raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
+        if profile.id != profile_id:
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
+        if (
+            profile.status is not StyleProfileStatus.ACTIVE
+            or profile.activated_at is None
+        ):
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         active_rules = self._repository.active_rules(
             owner_id=self._owner_id, profile_id=profile_id
         )
         examples = self._repository.approved_examples(
             owner_id=self._owner_id, profile_id=profile_id
+        )
+        _validate_records(
+            active_rules,
+            examples,
+            owner_id=self._owner_id,
+            profile_id=profile_id,
         )
         matching = tuple(
             example
@@ -59,6 +74,7 @@ class StyleContextBuilder:
             if example.rubric == rubric
             and example.format == format
             and set(tags).intersection(example.tags)
+            and risk in example.risks
         )
         positive_examples = tuple(
             sorted(
@@ -80,7 +96,7 @@ class StyleContextBuilder:
                     if example.rating is not None and example.rating <= 3
                 ),
                 key=lambda example: example.text,
-            )
+            )[:5]
         )
         return StyleContext(
             hard_rules=tuple(
@@ -91,6 +107,8 @@ class StyleContextBuilder:
                         if rule.status is RuleStatus.ACTIVE
                         and rule.scope is RuleScope.HARD
                         and rule.confirmed_at is not None
+                        and (not rule.risks or risk in rule.risks)
+                        and (not rule.tags or bool(set(tags).intersection(rule.tags)))
                     ),
                     key=lambda rule: rule.text,
                 )
@@ -103,6 +121,9 @@ class StyleContextBuilder:
                         if rule.status is RuleStatus.ACTIVE
                         and rule.scope is RuleScope.FORMAT
                         and rule.confirmed_at is not None
+                        and rule.format == format
+                        and (not rule.risks or risk in rule.risks)
+                        and (not rule.tags or bool(set(tags).intersection(rule.tags)))
                     ),
                     key=lambda rule: rule.text,
                 )
@@ -112,3 +133,22 @@ class StyleContextBuilder:
             selected_angle=selected_angle,
             medical_constraints=medical_constraints,
         )
+
+
+def _validate_records(
+    rules: tuple[StyleRule, ...],
+    examples: tuple[StyleExample, ...],
+    *,
+    owner_id: int,
+    profile_id: UUID,
+) -> None:
+    for record in rules:
+        if record.owner_id != owner_id:
+            raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
+        if record.profile_id != profile_id:
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
+    for example in examples:
+        if example.owner_id != owner_id:
+            raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
+        if example.profile_id != profile_id:
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)

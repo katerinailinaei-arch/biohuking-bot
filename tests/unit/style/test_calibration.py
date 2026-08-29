@@ -61,6 +61,28 @@ def test_calibration_records_only_explicit_feedback_as_proposed_rule_inputs() ->
     assert feedback.creates_active_rule is False
 
 
+def test_calibration_rejects_selected_or_duplicate_rejected_variants() -> None:
+    service = CalibrationService()
+    calibration = service.start(_topics())
+
+    with pytest.raises(ValueError, match="both selected and rejected"):
+        service.record_feedback(
+            calibration,
+            topic_id="topic-0",
+            selected_variant=1,
+            rejected_variants=(1,),
+            edit=None,
+        )
+    with pytest.raises(ValueError, match="unique"):
+        service.record_feedback(
+            calibration,
+            topic_id="topic-0",
+            selected_variant=None,
+            rejected_variants=(0, 0),
+            edit=None,
+        )
+
+
 def test_holdouts_are_exactly_three_unique_unseen_full_posts() -> None:
     service = CalibrationService()
     calibration = service.start(_topics())
@@ -108,3 +130,19 @@ def test_style_gate_requires_zero_hard_violations_two_holdouts_and_median_four()
     )
     assert rejected.passed is False
     assert rejected.reason == "hard_rule_violations"
+
+
+@pytest.mark.parametrize(
+    ("rating", "violations"),
+    ((0, 0), (6, 0), (4, -1)),
+)
+def test_holdout_result_rejects_values_outside_the_gate_domain(
+    rating: int, violations: int
+) -> None:
+    with pytest.raises(ValueError):
+        HoldoutResult(
+            "invalid",
+            rating=rating,
+            accepted_without_rewrite=True,
+            hard_rule_violations=violations,
+        )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -19,11 +20,40 @@ class RuleStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class StyleProfileStatus(StrEnum):
+    CALIBRATING = "calibrating"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+
+
+_PATTERN_PART = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+_PATTERN_SLUG = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+
+
+def normalize_pattern_key(value: str) -> str:
+    """Normalize the explicit category:slug key used for edit similarity."""
+    parts = value.strip().lower().split(":")
+    if len(parts) != 2:
+        raise ValueError("Invalid pattern key")
+    category, slug = (
+        re.sub(r"-+", "-", re.sub(r"[_\s]+", "-", part)).strip("-")
+        for part in parts
+    )
+    if not _PATTERN_PART.fullmatch(category) or not _PATTERN_SLUG.fullmatch(slug):
+        raise ValueError("Invalid pattern key")
+    return f"{category}:{slug}"
+
+
 @dataclass(frozen=True)
 class StyleProfile:
     id: UUID
     owner_id: int
     version: int
+    status: StyleProfileStatus = StyleProfileStatus.CALIBRATING
+    activated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", StyleProfileStatus(self.status))
 
 
 @dataclass(frozen=True)
@@ -37,10 +67,15 @@ class StyleRule:
     status: RuleStatus
     pattern_key: str = ""
     confirmed_at: datetime | None = None
+    format: str | None = None
+    risks: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", RuleScope(self.scope))
         object.__setattr__(self, "status", RuleStatus(self.status))
+        if self.pattern_key:
+            object.__setattr__(self, "pattern_key", normalize_pattern_key(self.pattern_key))
 
 
 @dataclass(frozen=True)
@@ -53,6 +88,7 @@ class StyleExample:
     format: str
     tags: tuple[str, ...]
     rating: int | None
+    risks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -106,6 +142,12 @@ class HoldoutResult:
     accepted_without_rewrite: bool
     hard_rule_violations: int = 0
 
+    def __post_init__(self) -> None:
+        if not 1 <= self.rating <= 5:
+            raise ValueError("Holdout rating must be between 1 and 5")
+        if self.hard_rule_violations < 0:
+            raise ValueError("Hard rule violations cannot be negative")
+
 
 @dataclass(frozen=True)
 class StyleGateDecision:
@@ -147,3 +189,13 @@ class EditObservation:
     pattern_key: str
     confirmed: bool
     explicit_remember: bool = False
+    scope: RuleScope = RuleScope.FORMAT
+    format: str | None = "post"
+    risks: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "pattern_key", normalize_pattern_key(self.pattern_key))
+        object.__setattr__(self, "scope", RuleScope(self.scope))
+        if self.scope is RuleScope.FORMAT and not self.format:
+            raise ValueError("Format rules require a format")
