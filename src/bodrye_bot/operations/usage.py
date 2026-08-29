@@ -37,10 +37,15 @@ class UsageRecord:
             "error_class",
         ):
             value = getattr(self, field_name)
-            if value is not None and _is_sensitive_label(value):
-                object.__setattr__(self, field_name, "[redacted]")
-        if self.provider_request_id is not None and _is_sensitive_label(self.provider_request_id):
-            object.__setattr__(self, "provider_request_id", None)
+            if value is not None:
+                object.__setattr__(self, field_name, _sanitize_required_identifier(value))
+        object.__setattr__(
+            self,
+            "provider_request_id",
+            _sanitize_optional_identifier(self.provider_request_id),
+        )
+        if _TRACE_ID.fullmatch(self.trace_id) is None:
+            object.__setattr__(self, "trace_id", "[redacted]")
 
     def __repr__(self) -> str:
         return (
@@ -58,10 +63,24 @@ class UsageRecord:
 
 _CREDENTIAL_URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^/:@\s]+:[^/@\s]+@", re.I)
 _SECRET_PREFIX = re.compile(r"^(?:sk|gsk|xox[baprs])[-_]", re.I)
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
+_TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _is_sensitive_label(value: str) -> bool:
     return _CREDENTIAL_URL.search(value) is not None or _SECRET_PREFIX.search(value) is not None
+
+
+def _sanitize_required_identifier(value: str) -> str:
+    if _is_sensitive_label(value) or _SAFE_IDENTIFIER.fullmatch(value) is None:
+        return "[redacted]"
+    return value
+
+
+def _sanitize_optional_identifier(value: str | None) -> str | None:
+    if value is None or _is_sensitive_label(value) or _SAFE_IDENTIFIER.fullmatch(value) is None:
+        return None
+    return value
 
 
 __all__ = ["UsageRecord"]

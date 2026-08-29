@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
@@ -128,6 +130,33 @@ def test_usage_redacts_credential_bearing_labels_before_log_serialization():
     assert payload["model"] == "[redacted]"
     assert payload["provider_request_id"] is None
     assert "supersecret" not in repr(usage)
+
+
+@pytest.mark.asyncio
+async def test_credential_like_provider_request_id_never_becomes_application_id():
+    secret_request_id = "sk-provider-secret-request"
+    transport = FakeTransport(
+        [
+            TransportResponse(
+                status_code=200,
+                json_body={
+                    "claim_candidates": [{"exact_text": "Текст.", "medical_uncertainty": False}],
+                    "provenance": [],
+                },
+                request_id=secret_request_id,
+            )
+        ]
+    )
+    provider = GroqProvider(transport=transport, model="openai/gpt-oss-120b")
+
+    result = await provider.extract(extract_request())
+    usage = await provider.estimate_or_report_usage(result.response_id)
+
+    assert re.fullmatch(r"[0-9a-f]{32}", result.response_id)
+    assert secret_request_id not in result.response_id
+    assert usage.provider_request_id is None
+    assert secret_request_id not in repr(usage)
+    assert secret_request_id not in str(usage.model_dump(mode="json"))
 
 
 @pytest.mark.parametrize(

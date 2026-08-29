@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 class RequestContext(StrictModel):
@@ -64,7 +64,7 @@ class Provenance(StrictModel):
 
 
 class ExtractResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     claim_candidates: tuple[ClaimCandidate, ...]
     provenance: tuple[Provenance, ...]
 
@@ -83,12 +83,12 @@ class ClaimClassification(StrictModel):
 
 
 class ClaimsResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     claims: tuple[ClaimClassification, ...]
 
 
 class EvidenceResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     synthesis: str
     verdict: ClaimVerdict
 
@@ -101,12 +101,12 @@ class AngleProposal(StrictModel):
 
 
 class AnglesResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     angles: tuple[AngleProposal, ...]
 
 
 class DraftResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     body: str
     headlines: tuple[str, ...]
 
@@ -118,7 +118,7 @@ class ChangeAssessment(StrEnum):
 
 
 class ChangeResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     assessment: ChangeAssessment
     reasons: tuple[str, ...]
 
@@ -129,7 +129,7 @@ class StyleCandidate(StrictModel):
 
 
 class StyleInferenceResponse(StrictModel):
-    response_id: str
+    response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     candidates: tuple[StyleCandidate, ...]
 
 
@@ -158,7 +158,7 @@ class UsageReport(StrictModel):
     input_tokens: int | None
     output_tokens: int | None
     error_class: str | None
-    trace_id: str
+    trace_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
 class TransportRequest(StrictModel):
@@ -176,9 +176,9 @@ class TransportResponse(StrictModel):
     text_body: str | None = Field(default=None, repr=False)
     headers: Mapping[str, str] = Field(default_factory=dict, repr=False)
     request_id: str | None = None
-    latency_ms: int | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
+    latency_ms: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
     refusal: bool = False
 
 

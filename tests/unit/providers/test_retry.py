@@ -47,9 +47,13 @@ async def test_safe_5xx_retries_twice_then_succeeds():
 
     result = await provider.extract(extract_request())
 
-    assert result.response_id == "ok"
+    assert len(result.response_id) == 32
     assert transport.calls == 3
     assert sleeps == [1.0, 2.0]
+    usage = await provider.estimate_or_report_usage(result.response_id)
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.latency_ms is None
 
 
 async def _record_sleep(sleeps: list[float], delay: float) -> None:
@@ -59,7 +63,7 @@ async def _record_sleep(sleeps: list[float], delay: float) -> None:
 @pytest.mark.asyncio
 async def test_exhausted_quota_does_not_retry_and_opens_new_call_circuit():
     transport = FakeTransport(
-        [TransportResponse(status_code=429, headers={"x-ratelimit-remaining-tokens": "0"})]
+        [TransportResponse(status_code=429, headers={"X-RateLimit-Remaining-Tokens": "0"})]
     )
     provider = GroqProvider(transport=transport, model="openai/gpt-oss-120b")
 
@@ -74,8 +78,16 @@ async def test_exhausted_quota_does_not_retry_and_opens_new_call_circuit():
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_after_retry_budget_has_safe_code():
-    transport = FakeTransport([TransportResponse(status_code=429) for _ in range(3)])
+async def test_positive_remaining_rate_limit_retries_then_has_safe_code():
+    transport = FakeTransport(
+        [
+            TransportResponse(
+                status_code=429,
+                headers={"x-ratelimit-remaining-tokens": "12"},
+            )
+            for _ in range(3)
+        ]
+    )
     provider = GroqProvider(
         transport=transport,
         model="openai/gpt-oss-120b",
@@ -88,6 +100,23 @@ async def test_rate_limit_after_retry_budget_has_safe_code():
 
     assert caught.value.code is SafeErrorCode.LLM_RATE_LIMIT
     assert transport.calls == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("headers", [{}, {"x-ratelimit-remaining-tokens": "unknown"}])
+async def test_unknown_remaining_rate_limit_never_retries(headers):
+    transport = FakeTransport([TransportResponse(status_code=429, headers=headers)])
+    provider = GroqProvider(
+        transport=transport,
+        model="openai/gpt-oss-120b",
+        sleep=_discard_sleep,
+    )
+
+    with pytest.raises(SafeError) as caught:
+        await provider.extract(extract_request())
+
+    assert caught.value.code is SafeErrorCode.LLM_RATE_LIMIT
+    assert transport.calls == 1
 
 
 async def _discard_sleep(_: float) -> None:
