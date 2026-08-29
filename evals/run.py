@@ -228,11 +228,14 @@ def _change_assertions(
     assessment: ChangeAssessment,
     reasons: tuple[str, ...],
 ) -> tuple[str, ...]:
-    semantic = assessment in {ChangeAssessment.SEMANTIC, ChangeAssessment.MEDICAL} and bool(reasons)
+    if assessment not in {ChangeAssessment.SEMANTIC, ChangeAssessment.MEDICAL}:
+        return ()
+    reason_tags = frozenset(reason for reason in reasons if reason.startswith("eval:"))
     return tuple(
         assertion
         for assertion in case.hard_assertions
-        if assertion.startswith("edit_") and semantic
+        if assertion.startswith(("edit_", "length_"))
+        and f"eval:{assertion}" in reason_tags
     )
 
 
@@ -314,7 +317,10 @@ def main() -> int:
     except DatasetValidationError:
         print("Файл сценариев проверки повреждён или неполон.", file=sys.stderr)
         return 1
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except OSError:
+        print("Не удалось безопасно сохранить отчёт проверки.", file=sys.stderr)
+        return 1
+    except (ValueError, json.JSONDecodeError) as error:
         print(f"Не удалось выполнить проверку модели: {error}", file=sys.stderr)
         return 1
 

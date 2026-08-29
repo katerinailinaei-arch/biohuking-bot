@@ -34,16 +34,20 @@ DATASET_PATH = Path("evals/dataset.jsonl")
 def _result(
     fixture_id: str,
     *,
+    category: str = "style_holdout",
+    blind_label: str | None = None,
     schema_valid: bool = True,
     violations: tuple[str, ...] = (),
+    blind_rating: float | None = 4.5,
+    style_rating: float | None = 4.5,
 ) -> EvalCaseResult:
     return EvalCaseResult(
         fixture_id=fixture_id,
-        category="calibration",
-        blind_label=f"blind-{fixture_id}",
+        category=category,
+        blind_label=blind_label or f"blind-{fixture_id}",
         schema_valid=schema_valid,
-        blind_rating=4.5,
-        style_rating=4.5,
+        blind_rating=blind_rating,
+        style_rating=style_rating,
         hard_violations=violations,
         latency_ms=12,
         input_tokens=None,
@@ -75,11 +79,21 @@ def _report(
 
 
 def _gate() -> ActivationGate:
-    return ActivationGate(
-        expected_dataset_version="dataset-v1",
-        expected_dataset_hash="a" * 64,
-        required_fixture_ids=frozenset({"case-1"}),
+    expected_dataset = EvalDataset(
+        version="dataset-v1",
+        sha256="a" * 64,
+        cases=(
+            EvalCase(
+                id="case-1",
+                category="style_holdout",
+                input=MappingProxyType({"topic": "gate", "text": "gate"}),
+                expected_schema="draft-v1",
+                hard_assertions=(),
+                blind_label="blind-case-1",
+            ),
+        ),
     )
+    return ActivationGate(expected_dataset=expected_dataset)
 
 
 def test_canonical_dataset_has_strict_versioned_required_coverage() -> None:
@@ -170,7 +184,7 @@ class _TypedProvider:
         return ChangeResponse(
             response_id="3" * 32,
             assessment=ChangeAssessment.SEMANTIC,
-            reasons=("meaning changed",),
+            reasons=tuple(request.proposed_text.split(",")),
         )
 
     async def generate_draft(self, request: Any) -> DraftResponse:
@@ -217,9 +231,15 @@ async def test_llm_provider_adapter_evaluates_typed_outputs_and_usage() -> None:
         EvalCase(
             id="edit",
             category="calibration",
-            input=MappingProxyType({"topic": "c", "text": "edit"}),
+            input=MappingProxyType(
+                {
+                    "topic": "c",
+                    "text": "edit",
+                    "proposed": "eval:edit_action,eval:length_long",
+                }
+            ),
             expected_schema="change-v1",
-            hard_assertions=("edit_action",),
+            hard_assertions=("edit_action", "length_long"),
             blind_label="B3",
         ),
         EvalCase(
@@ -248,6 +268,67 @@ async def test_llm_provider_adapter_evaluates_typed_outputs_and_usage() -> None:
     assert all(result.latency_ms == 17 for result in report.results)
     assert all(result.input_tokens is None for result in report.results)
     assert report.style_score == 4.5
+
+
+def _change_adapter(case: EvalCase) -> LLMProviderEvalAdapter:
+    return LLMProviderEvalAdapter(
+        provider=_TypedProvider(),  # type: ignore[arg-type]
+        provider_name="typed-fake",
+        model="typed-model",
+        prompt_version="prompt-v1",
+        schema_version="schema-v1",
+        blind_ratings={case.blind_label: 4.5},
+        style_ratings={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_semantic_reason_passes_no_specific_edit_or_length_assertion() -> None:
+    assertions = (
+        "edit_number",
+        "edit_modality",
+        "edit_population",
+        "edit_action",
+        "length_long",
+    )
+    case = EvalCase(
+        id="edit-isolation",
+        category="calibration",
+        input=MappingProxyType(
+            {"topic": "edit", "text": "change", "proposed": "meaning changed"}
+        ),
+        expected_schema="change-v1",
+        hard_assertions=assertions,
+        blind_label="EDIT",
+    )
+    dataset = EvalDataset(version="dataset-v1", sha256="a" * 64, cases=(case,))
+
+    report = await run_eval(_change_adapter(case), dataset)
+
+    assert report.results[0].hard_violations == assertions
+
+
+@pytest.mark.asyncio
+async def test_only_explicit_matching_edit_tag_passes_and_other_types_stay_isolated() -> None:
+    case = EvalCase(
+        id="edit-tagged",
+        category="calibration",
+        input=MappingProxyType(
+            {"topic": "edit", "text": "change", "proposed": "eval:edit_number"}
+        ),
+        expected_schema="change-v1",
+        hard_assertions=("edit_number", "edit_modality", "edit_population", "edit_action"),
+        blind_label="EDIT",
+    )
+    dataset = EvalDataset(version="dataset-v1", sha256="a" * 64, cases=(case,))
+
+    report = await run_eval(_change_adapter(case), dataset)
+
+    assert report.results[0].hard_violations == (
+        "edit_modality",
+        "edit_population",
+        "edit_action",
+    )
 
 
 def test_one_hard_safety_violation_blocks_activation() -> None:
@@ -282,7 +363,7 @@ def test_gate_blocks_dataset_identity_fixture_coverage_and_low_style() -> None:
         dataset_version="other",
         dataset_hash="b" * 64,
         style_score=3.9,
-        results=(_result("unexpected"),),
+        results=(_result("unexpected", style_rating=3.9),),
     )
 
     assert _gate().decide(mismatched).reasons == (
@@ -290,6 +371,85 @@ def test_gate_blocks_dataset_identity_fixture_coverage_and_low_style() -> None:
         "dataset_hash_mismatch",
         "fixture_coverage_incomplete",
         "style_score_unacceptable",
+    )
+
+
+def test_gate_rejects_fixture_metadata_mismatch_and_duplicate_fixture() -> None:
+    mismatched = _report(
+        results=(
+            _result("case-1", category="calibration", blind_label="wrong-label"),
+            _result("case-1", category="calibration", blind_label="wrong-label"),
+        )
+    )
+
+    assert _gate().decide(mismatched).reasons == (
+        "fixture_coverage_incomplete",
+        "fixture_metadata_mismatch",
+    )
+
+
+def test_gate_constructor_cannot_silently_omit_style_or_duplicate_metadata() -> None:
+    calibration = EvalCase(
+        id="same",
+        category="calibration",
+        input=MappingProxyType({"topic": "a", "text": "a"}),
+        expected_schema="claims-v1",
+        hard_assertions=(),
+        blind_label="A",
+    )
+    style = EvalCase(
+        id="same",
+        category="style_holdout",
+        input=MappingProxyType({"topic": "b", "text": "b"}),
+        expected_schema="draft-v1",
+        hard_assertions=(),
+        blind_label="B",
+    )
+
+    with pytest.raises(ValueError, match="style fixture metadata"):
+        ActivationGate(
+            expected_dataset=EvalDataset(
+                version="v1",
+                sha256="a" * 64,
+                cases=(calibration,),
+            )
+        )
+    with pytest.raises(ValueError, match="unique fixture metadata"):
+        ActivationGate(
+            expected_dataset=EvalDataset(
+                version="v1",
+                sha256="a" * 64,
+                cases=(calibration, style),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("result", "reason"),
+    [
+        (_result("case-1", blind_rating=None), "model_eval_missing"),
+        (_result("case-1", blind_rating=float("nan")), "model_eval_invalid"),
+        (_result("case-1", style_rating=None), "style_eval_missing"),
+        (_result("case-1", style_rating=5.1), "style_eval_invalid"),
+    ],
+)
+def test_gate_requires_valid_per_fixture_ratings(
+    result: EvalCaseResult,
+    reason: str,
+) -> None:
+    assert _gate().decide(_report(results=(result,))).reasons == (reason,)
+
+
+def test_gate_recomputes_model_and_style_scores_from_exact_expected_fixtures() -> None:
+    report = _report(
+        model_score=4.5,
+        style_score=4.5,
+        results=(_result("case-1", blind_rating=4.0, style_rating=4.0),),
+    )
+
+    assert _gate().decide(report).reasons == (
+        "model_score_mismatch",
+        "style_score_mismatch",
     )
 
 
@@ -364,4 +524,35 @@ def test_cli_hides_invalid_dataset_detail_behind_safe_russian_message(
     assert output.out == ""
     assert output.err == "Файл сценариев проверки повреждён или неполон.\n"
     assert "JSON" not in output.err
+    assert "Traceback" not in output.err
+
+
+def test_cli_hides_output_write_error_path_and_technical_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    def fail_write(*args: object, **kwargs: object) -> int:
+        raise OSError("C:/secret/private/report.json access denied")
+
+    monkeypatch.setattr(Path, "write_text", fail_write)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evals.run",
+            "--provider",
+            "fake",
+            "--dataset",
+            str(DATASET_PATH),
+            "--output",
+            str(tmp_path / "report.json"),
+        ],
+    )
+
+    assert main() == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "Не удалось безопасно сохранить отчёт проверки.\n"
+    assert "secret" not in output.err
+    assert "denied" not in output.err
     assert "Traceback" not in output.err

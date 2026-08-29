@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 
 import pytest
 
@@ -10,13 +11,14 @@ from bodrye_bot.operations.model_activation import (
     ActivationRegistry,
     EvaluatedModel,
 )
-from evals.report import EvalCaseResult, EvalReport
+from evals.report import EvalCase, EvalCaseResult, EvalDataset, EvalReport
 
 
 def _report(
     model: str,
     *,
     violations: tuple[str, ...] = (),
+    rating: float = 4.5,
 ) -> EvalReport:
     return EvalReport(
         dataset_version="dataset-v1",
@@ -25,17 +27,17 @@ def _report(
         model=model,
         prompt_version="prompt-v1",
         schema_version="schema-v1",
-        model_score=4.5,
-        style_score=4.5,
+        model_score=rating,
+        style_score=rating,
         safety_score=1.0 if not violations else 0.0,
         results=(
             EvalCaseResult(
                 fixture_id="case-1",
-                category="calibration",
+                category="style_holdout",
                 blind_label="blind-a",
                 schema_valid=True,
-                blind_rating=4.5,
-                style_rating=4.5,
+                blind_rating=rating,
+                style_rating=rating,
                 hard_violations=violations,
                 latency_ms=10,
                 input_tokens=12,
@@ -46,13 +48,21 @@ def _report(
 
 
 def _registry() -> ActivationRegistry:
-    return ActivationRegistry(
-        ActivationGate(
-            expected_dataset_version="dataset-v1",
-            expected_dataset_hash="a" * 64,
-            required_fixture_ids=frozenset({"case-1"}),
-        )
+    expected_dataset = EvalDataset(
+        version="dataset-v1",
+        sha256="a" * 64,
+        cases=(
+            EvalCase(
+                id="case-1",
+                category="style_holdout",
+                input=MappingProxyType({"topic": "gate", "text": "gate"}),
+                expected_schema="draft-v1",
+                hard_assertions=(),
+                blind_label="blind-a",
+            ),
+        ),
     )
+    return ActivationRegistry(ActivationGate(expected_dataset=expected_dataset))
 
 
 def test_activation_records_only_exact_evaluated_tuple_in_immutable_audit() -> None:
@@ -110,6 +120,32 @@ def test_rollback_reselects_previous_validated_tuple_and_appends_audit() -> None
     assert registry.active == first.evaluated
     assert len(registry.audit_log) == 3
     assert isinstance(registry.audit_log, tuple)
+
+
+def test_repeated_tuple_rollback_preserves_each_activation_report_hash() -> None:
+    registry = _registry()
+    at = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
+    first_a = registry.activate(_report("candidate-a", rating=4.5), actor="owner:42", at=at)
+    candidate_b = registry.activate(
+        _report("candidate-b", rating=4.6),
+        actor="owner:42",
+        at=at + timedelta(minutes=1),
+    )
+    second_a = registry.activate(
+        _report("candidate-a", rating=4.7),
+        actor="owner:42",
+        at=at + timedelta(minutes=2),
+    )
+    assert first_a.report_hash != second_a.report_hash
+
+    rollback_b = registry.rollback(actor="owner:42", at=at + timedelta(minutes=3))
+    rollback_first_a = registry.rollback(actor="owner:42", at=at + timedelta(minutes=4))
+
+    assert rollback_b.evaluated.model == "candidate-b"
+    assert rollback_b.report_hash == candidate_b.report_hash
+    assert rollback_first_a.evaluated.model == "candidate-a"
+    assert rollback_first_a.report_hash == first_a.report_hash
+    assert len(registry.audit_log) == 5
 
 
 def test_activation_audit_contains_metadata_but_no_content_or_secrets() -> None:
