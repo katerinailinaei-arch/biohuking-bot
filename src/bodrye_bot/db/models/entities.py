@@ -605,6 +605,19 @@ class AuditEvent(OwnedRecord, Base):
             "octet_length(metadata_json::text) <= 65536",
             name="audit_metadata_bounded",
         ),
+        CheckConstraint(
+            "event_type IN ("
+            "'workflow.state_changed', "
+            "'configuration.changed', "
+            "'style.rule_decision', "
+            "'publication.approval_recorded', "
+            "'publication.schedule_changed', "
+            "'memory.deletion_recorded', "
+            "'publication.delivery_resolved_manually', "
+            "'operations.backup_result_recorded'"
+            ")",
+            name="audit_event_type_known",
+        ),
     )
 
     workflow_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)

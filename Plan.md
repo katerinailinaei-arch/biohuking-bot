@@ -85,9 +85,9 @@
 - **Зависит от:** P0.T2.
 - **Результат:** схема блокирует основные нарушения даже при ошибке application layer.
 
-#### P0.T4. Owner-scoped repositories, UoW и audit — ⬜ NOT_STARTED
+#### P0.T4. Owner-scoped repositories, UoW и audit — ✅ DONE
 
-- [ ] **P0.T4 завершена и имеет evidence.**
+- [x] **P0.T4 завершена и имеет evidence.**
 - **Файлы:** create `src/bodrye_bot/ports/repositories.py`, `db/repositories/*.py`, `db/uow.py`, `operations/audit.py`; tests `tests/integration/test_repository_ownership.py`, `test_uow.py`, `test_audit.py`.
 - **Тесты:** cross-owner read/write = 0, optimistic lock, transaction rollback, append-only audit, secret/prompt/source redaction.
 - **Зависит от:** P0.T3.
@@ -329,7 +329,7 @@ all gates ───────────────────────�
 
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
-| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2, P0.T3 | 🟡 IN_PROGRESS | Нет |
+| P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Выполнено: P0.T0, P0.T1, P0.T2, P0.T3, P0.T4 | 🟡 IN_PROGRESS | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
@@ -359,6 +359,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-29T07:58:00Z | P0.T4 | 236b28d+worktree | TDD RED: 3 import errors, then nested mutation/TRUNCATE/unknown-event constraints failed; focused P0 PostgreSQL: 48 passed; full pytest: 98 passed; Ruff and strict mypy: clean; Alembic 0001→0002 downgrade-upgrade and check: passed; append-only audit and persisted recursive redaction verified | Plan.md | PostgreSQL 17.11 локально; PostgreSQL 16 проверяется CI после push |
+| 2026-08-28T18:52:28Z | P0.T4 start | 236b28d+worktree | baseline full pytest: 77 passed; branch synced with origin/feature/p0-foundation; PostgreSQL test database available | Plan.md | Реализация repositories/UoW/audit ещё не начата |
 | 2026-08-28T18:37:10Z | P0.T3 | 4a9e429+worktree | Fix artifact 4a9e429: focused PostgreSQL 26 passed; Alembic downgrade-upgrade; full pytest 77 passed; Ruff and strict mypy clean; CI fails closed without TEST_DATABASE_URL | Plan.md | Нет |
 | 2026-08-28T15:46:47Z | P0.T3 start | b2fd65e+worktree | baseline pytest: 50 passed; pg_isready 127.0.0.1:55432: accepting connections; PostgreSQL 17.11; public tables: 0 | Plan.md | Статус исправлен на IN_PROGRESS; schema/migrations ещё не реализованы |
 | 2026-08-28T13:22:35Z | P0.T3 | 634104f | docker --version: команда отсутствует; PostgreSQL 17 service: running; port 5433: listening; psql без пароля: authentication rejected | Plan.md | Нужен локальный TEST_DATABASE_URL к отдельной тестовой БД; секрет не передавать в чат |

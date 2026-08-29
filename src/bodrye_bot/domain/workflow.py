@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from uuid import UUID
 
 from bodrye_bot.domain.common import content_hash
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
@@ -46,6 +47,9 @@ class WorkflowState:
     approval_version_id: str | None = None
     approval_hash: str | None = None
     delivery_confirmed_not_sent: bool = False
+    id: UUID | None = None
+    owner_id: int | None = None
+    version: int | None = None
 
 
 @dataclass(frozen=True)
