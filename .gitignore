@@ -11,6 +11,7 @@ dist/
 build/
 *.egg-info/
 .superpowers/
+.artifacts/
 .worktrees/
 logs/
 tmp/

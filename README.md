@@ -4,7 +4,7 @@
 
 ## Текущее состояние
 
-Реализация идёт по [Plan.md](Plan.md). Создан Python 3.12 application scaffold со строгой конфигурацией и автоматическими quality gates. Бот и worker появятся в следующих задачах плана.
+Реализация идёт по [Plan.md](Plan.md). Созданы Python 3.12 application scaffold, owner-only Telegram shell, provider-neutral LLM boundary и офлайн eval gate. Полный worker появляется в следующих задачах плана.
 
 ## Локальная установка
 
@@ -37,6 +37,14 @@ python -m ruff check .
 python -m mypy src evals
 python -m pytest -v
 ```
+
+Кандидат модели проверяется воспроизводимым офлайн-набором без сетевых вызовов:
+
+```powershell
+python -m evals.run --provider fake --dataset evals/dataset.jsonl --output .artifacts/eval-fake.json
+```
+
+Команда возвращает код `0` только для проходящего отчёта. Сгенерированные файлы `.artifacts/` локальны и не коммитятся.
 
 ## Проверка и обновление Plan.md
 
