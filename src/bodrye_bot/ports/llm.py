@@ -175,7 +175,7 @@ class TransportResponse(StrictModel):
     json_body: Any | None = Field(default=None, repr=False)
     text_body: str | None = Field(default=None, repr=False)
     headers: Mapping[str, str] = Field(default_factory=dict, repr=False)
-    request_id: str | None = None
+    request_id: str | None = Field(default=None, repr=False)
     latency_ms: int | None = Field(default=None, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)

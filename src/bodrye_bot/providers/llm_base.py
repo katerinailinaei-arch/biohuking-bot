@@ -150,11 +150,11 @@ class BaseLLMProvider:
     async def estimate_or_report_usage(self, response_id: str) -> UsageReport:
         try:
             return self._usage[response_id].to_report()
-        except KeyError as exc:
+        except KeyError:
             raise SafeError.for_code(
                 SafeErrorCode.INTERNAL_ERROR,
                 developer_detail="provider_error_class=usage_not_found",
-            ) from exc
+            ) from None
 
     async def _invoke(
         self,
@@ -194,7 +194,9 @@ class BaseLLMProvider:
         try:
             result = self._validate_response(response, response_type, trace_id)
         except (json.JSONDecodeError, ValidationError, TypeError) as first_error:
-            if self._must_block_without_repair(first_error):
+            if self._must_block_without_repair(first_error) or self._contains_conservative_marker(
+                response
+            ):
                 raise self._failure(
                     SafeErrorCode.LLM_INVALID_OUTPUT,
                     "schema_invalid",
@@ -202,7 +204,7 @@ class BaseLLMProvider:
                     request,
                     trace_id,
                     usage,
-                ) from first_error
+                ) from None
             repaired = await self._send_with_retries(
                 operation,
                 request,
@@ -218,10 +220,10 @@ class BaseLLMProvider:
                     request,
                     trace_id,
                     usage,
-                ) from first_error
+                ) from None
             try:
                 result = self._validate_response(repaired, response_type, trace_id)
-            except (json.JSONDecodeError, ValidationError, TypeError) as second_error:
+            except (json.JSONDecodeError, ValidationError, TypeError):
                 raise self._failure(
                     SafeErrorCode.LLM_INVALID_OUTPUT,
                     "schema_invalid_after_repair",
@@ -229,7 +231,7 @@ class BaseLLMProvider:
                     request,
                     trace_id,
                     usage,
-                ) from second_error
+                ) from None
 
         response_id = result.model_dump().get("response_id")
         assert isinstance(response_id, str)
@@ -264,7 +266,7 @@ class BaseLLMProvider:
                         total_timeout_seconds=self.total_timeout_seconds,
                     )
                 )
-            except TimeoutError as exc:
+            except TimeoutError:
                 usage.observe_unknown_attempt()
                 raise self._failure(
                     SafeErrorCode.LLM_TIMEOUT,
@@ -273,7 +275,17 @@ class BaseLLMProvider:
                     request,
                     trace_id,
                     usage,
-                ) from exc
+                ) from None
+            except Exception:
+                usage.observe_unknown_attempt()
+                raise self._failure(
+                    SafeErrorCode.LLM_UNAVAILABLE,
+                    "transport_error",
+                    operation,
+                    request,
+                    trace_id,
+                    usage,
+                ) from None
 
             usage.observe(response)
             if 200 <= response.status_code < 300:
@@ -360,6 +372,48 @@ class BaseLLMProvider:
             return False
         unsafe_types = {"extra_forbidden", "enum", "bool_parsing", "bool_type"}
         return any(item["type"] in unsafe_types for item in error.errors())
+
+    @classmethod
+    def _contains_conservative_marker(cls, response: TransportResponse) -> bool:
+        body = response.json_body
+        if body is None:
+            try:
+                body = json.loads(response.text_body or "")
+            except (json.JSONDecodeError, TypeError):
+                return False
+        return cls._value_contains_conservative_marker(body)
+
+    @classmethod
+    def _value_contains_conservative_marker(cls, value: object) -> bool:
+        if isinstance(value, Mapping):
+            for raw_key, nested in value.items():
+                key = str(raw_key).casefold()
+                if key == "medical_uncertainty" and nested is True:
+                    return True
+                if (
+                    key
+                    in {
+                        "manual_review",
+                        "requires_manual_review",
+                        "uncertain",
+                        "uncertainty",
+                    }
+                    and nested is True
+                ):
+                    return True
+                if key in {"verdict", "review_status", "status"} and isinstance(nested, str):
+                    if nested.casefold() in {
+                        "insufficient",
+                        "manual_review",
+                        "uncertain",
+                    }:
+                        return True
+                if cls._value_contains_conservative_marker(nested):
+                    return True
+            return False
+        if isinstance(value, list | tuple):
+            return any(cls._value_contains_conservative_marker(item) for item in value)
+        return False
 
     def _failure(
         self,

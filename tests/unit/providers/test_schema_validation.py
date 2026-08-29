@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
-from bodrye_bot.ports.llm import ExtractRequest, TransportResponse
+from bodrye_bot.ports.llm import ClaimsRequest, ExtractRequest, TransportResponse
 from bodrye_bot.providers.groq import GroqProvider
 from tests.contract.test_llm_contract import FakeTransport, extract_request, valid_extract_payload
 
@@ -49,6 +49,59 @@ async def test_string_false_cannot_become_medical_certainty_or_trigger_repair():
 
     with pytest.raises(SafeError) as caught:
         await provider.extract(extract_request())
+
+    assert caught.value.code is SafeErrorCode.LLM_INVALID_OUTPUT
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_nested_medical_uncertainty_never_enters_schema_repair():
+    payload = {
+        "claim_candidates": [
+            {
+                "exact_text": "Данных недостаточно.",
+                "medical_uncertainty": True,
+            }
+        ],
+    }
+    transport = FakeTransport([TransportResponse(status_code=200, json_body=payload)])
+    provider = GroqProvider(transport=transport, model="openai/gpt-oss-120b")
+
+    with pytest.raises(SafeError) as caught:
+        await provider.extract(extract_request())
+
+    assert caught.value.code is SafeErrorCode.LLM_INVALID_OUTPUT
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_review_marker_in_invalid_output_never_enters_repair():
+    transport = FakeTransport(
+        [
+            TransportResponse(
+                status_code=200,
+                json_body={
+                    "claims": [
+                        {
+                            "exact_text": "Спорный claim.",
+                            "verdict": "manual_review",
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+    request = ClaimsRequest(
+        owner_id=42,
+        workflow_id=None,
+        prompt_version="claims-v1",
+        schema_version="claims-v1",
+        claims=("Спорный claim.",),
+    )
+    provider = GroqProvider(transport=transport, model="openai/gpt-oss-120b")
+
+    with pytest.raises(SafeError) as caught:
+        await provider.classify_claims(request)
 
     assert caught.value.code is SafeErrorCode.LLM_INVALID_OUTPUT
     assert len(transport.requests) == 1

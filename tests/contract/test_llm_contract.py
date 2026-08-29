@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import SecretStr
 
 from bodrye_bot.ports.llm import (
     AnglesRequest,
@@ -72,6 +73,7 @@ def openai_factory(transport: FakeTransport) -> OpenAIProvider:
         selected_provider="openai",
         cost_guard_enabled=True,
         eval_activated=True,
+        api_key=SecretStr("test-openai-key"),
     )
 
 
