@@ -154,8 +154,16 @@ class SensitiveInputGuard:
         self._expiration_handles[transient_id] = handle
 
     def _expire_transient(self, transient_id: str) -> None:
-        self._expiration_handles.pop(transient_id, None)
+        handle = self._expiration_handles.pop(transient_id, None)
+        transient = self._transient.get(transient_id)
+        if transient is None:
+            return
+        if transient.expires_at > self._clock():
+            self._schedule_expiration(transient_id, transient.expires_at)
+            return
         self._transient.pop(transient_id, None)
+        if handle is not None:
+            handle.cancel()
 
     def _discard_transient(self, transient_id: str) -> None:
         self._transient.pop(transient_id, None)

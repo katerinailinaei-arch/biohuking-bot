@@ -101,6 +101,36 @@ async def test_sensitive_payload_expires_autonomously_without_another_guard_call
 
 
 @pytest.mark.asyncio
+async def test_timer_does_not_expire_a_frozen_logical_clock() -> None:
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    clock = MutableClock(now)
+    service = SensitiveInputGuard(
+        OwnerGuard(42), ttl=timedelta(milliseconds=25), clock=clock
+    )
+    result = await service.inspect(42, "Диагноз и анализ крови: frozen clock")
+
+    await asyncio.sleep(0.15)
+
+    assert result.transient_id in service._transient
+
+
+@pytest.mark.asyncio
+async def test_timer_expires_after_logical_clock_advances_without_guard_call() -> None:
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    clock = MutableClock(now)
+    service = SensitiveInputGuard(
+        OwnerGuard(42), ttl=timedelta(milliseconds=25), clock=clock
+    )
+    result = await service.inspect(42, "Диагноз и анализ крови: logical advance")
+
+    await asyncio.sleep(0.05)
+    clock.now = now + timedelta(milliseconds=25)
+    await asyncio.sleep(0.05)
+
+    assert result.transient_id not in service._transient
+
+
+@pytest.mark.asyncio
 async def test_transient_holder_repr_never_contains_raw_sensitive_payload() -> None:
     raw_payload = "Диагноз и анализ крови: секретные значения"
     service = SensitiveInputGuard(OwnerGuard(42))
