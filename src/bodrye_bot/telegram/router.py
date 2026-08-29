@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -11,7 +12,6 @@ from uuid import UUID
 
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.workflow import Actor, WorkflowPolicy, WorkflowState, WorkflowStatus
-from bodrye_bot.identity.sensitive import SENSITIVE_CONFIRMATION_TEXT, SensitiveInputGuard
 from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.telegram.onboarding import OnboardingService
 from bodrye_bot.telegram.views import NEUTRAL_DENIAL, render_safe_error
@@ -22,8 +22,9 @@ _TARGETS: dict[str, WorkflowStatus] = {
     "approve": WorkflowStatus.APPROVED,
     "schedule": WorkflowStatus.SCHEDULED,
     "mark_published": WorkflowStatus.PUBLISHED,
-    "retry": WorkflowStatus.SCHEDULED,
 }
+_CALLBACK_ACTIONS = frozenset(_TARGETS)
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ class CallbackCodec:
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
 
     def encode(self, action: str, record_id: UUID, *, expires_at: datetime) -> str:
-        if not action.isascii() or not action.isidentifier() or len(action) > 16:
+        if action not in _CALLBACK_ACTIONS:
             raise ValueError("Unsupported callback action")
         encoded_id = base64.urlsafe_b64encode(record_id.bytes).rstrip(b"=").decode("ascii")
         expires = _to_base36(int(expires_at.timestamp()))
@@ -81,6 +82,8 @@ class CallbackCodec:
     def decode(self, token: str) -> CallbackPayload:
         try:
             action, encoded_id, raw_expiry, signature = token.split(":")
+            if action not in _CALLBACK_ACTIONS:
+                raise ValueError("Unsupported callback action")
             unsigned = f"{action}:{encoded_id}:{raw_expiry}"
             if not hmac.compare_digest(signature, self._sign(unsigned)):
                 raise ValueError("Invalid callback signature")
@@ -107,79 +110,58 @@ class TelegramShell:
         onboarding: OnboardingService | None = None,
         workflow_repository: WorkflowStore | None = None,
         callback_codec: CallbackCodec | None = None,
-        sensitive_input: SensitiveInputGuard | None = None,
         workflow_policy: WorkflowPolicy | None = None,
     ) -> None:
         self._owner_guard = owner_guard
         self._onboarding = onboarding if onboarding is not None else OnboardingService()
         self._workflow_repository = workflow_repository
         self._callback_codec = callback_codec
-        self._sensitive_input = sensitive_input
         self._workflow_policy = workflow_policy if workflow_policy is not None else WorkflowPolicy()
 
     async def handle(self, message: IncomingMessage) -> TelegramResponse:
         try:
             self._owner_guard.authorize(message.sender_id)
+            if message.text == "/start":
+                result = await self._onboarding.check()
+                return TelegramResponse(text=result.text, gates=result.gates, ready=result.ready)
+            command = message.text.split(maxsplit=1)[0]
+            text = {
+                "/status": "Статус проверяется в рабочем контуре.",
+                "/settings": "Настройки доступны только через безопасные шаги мастера.",
+                "/sources": "Разрешённые источники будут показаны после проверки доступа.",
+                "/style": "Профиль стиля доступен после калибровки.",
+                "/costs": "Использование будет показано после подключения учёта.",
+                "/help": "Используйте /start для проверки готовности.",
+            }.get(command, "Не удалось распознать команду. Используйте /help.")
+            return TelegramResponse(text=text)
         except SafeError as error:
             return self._owner_denial_or_safe_error(error)
-
-        if message.text == "/start":
-            result = await self._onboarding.check()
-            return TelegramResponse(text=result.text, gates=result.gates, ready=result.ready)
-        command = message.text.split(maxsplit=1)[0]
-        text = {
-            "/status": "Статус проверяется в рабочем контуре.",
-            "/settings": "Настройки доступны только через безопасные шаги мастера.",
-            "/sources": "Разрешённые источники будут показаны после проверки доступа.",
-            "/style": "Профиль стиля доступен после калибровки.",
-            "/costs": "Использование будет показано после подключения учёта.",
-            "/help": "Используйте /start для проверки готовности.",
-        }.get(command, "Не удалось распознать команду. Используйте /help.")
-        return TelegramResponse(text=text)
+        except Exception as error:
+            return _internal_error_response("message", error)
 
     async def handle_callback(self, callback: IncomingCallback) -> TelegramResponse:
         try:
             owner_id = self._owner_guard.authorize(callback.sender_id)
-        except SafeError as error:
-            return self._owner_denial_or_safe_error(error)
-        if self._callback_codec is None:
-            return _invalid_transition_response()
-        try:
-            payload = self._callback_codec.decode(callback.data)
-        except ValueError:
-            return _invalid_transition_response()
-
-        if payload.action in {"sconfirm", "scancel"}:
-            return await self._handle_sensitive_callback(owner_id, payload)
-        if self._workflow_repository is None or payload.action not in _TARGETS:
-            return _invalid_transition_response()
-        try:
+            if self._callback_codec is None:
+                return _invalid_transition_response()
+            try:
+                payload = self._callback_codec.decode(callback.data)
+            except ValueError:
+                return _invalid_transition_response()
+            if self._workflow_repository is None:
+                return _invalid_transition_response()
             state = await self._workflow_repository.get(owner_id, payload.record_id)
             updated = self._workflow_policy.transition(state, _TARGETS[payload.action], Actor.OWNER)
             if updated.version is None:
                 raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
             await self._workflow_repository.save(updated, expected_version=updated.version)
         except SafeError as error:
-            return TelegramResponse(render_safe_error(error))
+            return self._owner_denial_or_safe_error(error)
+        except Exception as error:
+            return _internal_error_response("callback", error)
         if payload.action == "approve":
             return TelegramResponse("Черновик утверждён после повторной проверки состояния.")
         return TelegramResponse("Действие подтверждено после повторной проверки состояния.")
-
-    async def _handle_sensitive_callback(
-        self, owner_id: int, payload: CallbackPayload
-    ) -> TelegramResponse:
-        if self._sensitive_input is None:
-            return _invalid_transition_response()
-        transient_id = payload.record_id.hex
-        if payload.action == "scancel":
-            await self._sensitive_input.cancel(owner_id, transient_id)
-            return TelegramResponse("Временный материал удалён.")
-        stored = await self._sensitive_input.confirm(
-            owner_id, transient_id, SENSITIVE_CONFIRMATION_TEXT
-        )
-        return TelegramResponse(
-            "Материал сохранён." if stored else "Подтверждение больше недоступно."
-        )
 
     @staticmethod
     def _owner_denial_or_safe_error(error: SafeError) -> TelegramResponse:
@@ -209,6 +191,18 @@ def _from_base36(value: str) -> int:
 
 def _invalid_transition_response() -> TelegramResponse:
     return TelegramResponse(render_safe_error(SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)))
+
+
+def _internal_error_response(event: str, error: Exception) -> TelegramResponse:
+    _LOG.error(
+        "telegram_shell_internal_error",
+        extra={
+            "safe_error_code": SafeErrorCode.INTERNAL_ERROR.value,
+            "event": event,
+            "exception_type": type(error).__name__,
+        },
+    )
+    return TelegramResponse(render_safe_error(SafeError.for_code(SafeErrorCode.INTERNAL_ERROR)))
 
 
 __all__ = [
