@@ -99,9 +99,9 @@
 
 **Готовое состояние:** только Кети видит Telegram shell; onboarding проверяет readiness; Groq/OpenAI следуют одному typed contract, а активация модели возможна только после eval.
 
-#### P1.T5. Owner-only Telegram, callbacks, safe views, onboarding — ⬜ NOT_STARTED
+#### P1.T5. Owner-only Telegram, callbacks, safe views, onboarding — ✅ DONE
 
-- [ ] **P1.T5 завершена и имеет evidence.**
+- [x] **P1.T5 завершена и имеет evidence.**
 - **Файлы:** create `identity/service.py`, `identity/sensitive.py`, `telegram/router.py`, `telegram/views.py`, `telegram/onboarding.py`, `main_bot.py`, `bootstrap.py`; tests `tests/unit/identity/*`, `tests/security/test_callback_ownership.py`, `tests/e2e/test_onboarding.py`.
 - **Тесты:** guard-before-read, callback re-authorization, opaque signed callback, HTML escaping, transient sensitive input, readiness gates, все safe codes и Russian copy из раздела 5.
 - **Зависит от:** Gate P0.
@@ -330,7 +330,7 @@ all gates ───────────────────────�
 | Фаза | План | Факт | Статус | Блокеры |
 |---|---|---|---|---|
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
-| P1 | T5–T7: owner Telegram, LLM adapters, eval | Код не создан | ⬜ NOT_STARTED | Gate P0 |
+| P1 | T5–T7: owner Telegram, LLM adapters, eval | Выполнено: P1.T5 | 🟡 IN_PROGRESS | Нет |
 | P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
@@ -359,6 +359,7 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-29T14:21:18Z | P1.T5 | d6077fb+worktree | Commits 025ecef..d6077fb; independent review PASS; owner-first Telegram shell, signed opaque callbacks, Russian safe errors, owner-bound sensitive input with autonomous TTL, five onboarding gates; full pytest 128 passed in 26.13s; Ruff clean; strict mypy clean (33 files). | Plan.md | Нет |
 | 2026-08-29T12:44:39Z | P0 | 38556bd+worktree | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | Plan.md | Нет |
 | 2026-08-29T12:43:27Z | P0.T4 | 38556bd+worktree | Independent review PASS; P0.T4 28 passed; full pytest 105 passed; Ruff, strict mypy, Alembic check and migration round-trip passed; app+DB audit envelope, append-only linkage, owner-scoped hydration/save verified | Plan.md | Нет |
 | 2026-08-29T07:58:00Z | P0.T4 | 236b28d+worktree | TDD RED: 3 import errors, then nested mutation/TRUNCATE/unknown-event constraints failed; focused P0 PostgreSQL: 48 passed; full pytest: 98 passed; Ruff and strict mypy: clean; Alembic 0001→0002 downgrade-upgrade and check: passed; append-only audit and persisted recursive redaction verified | Plan.md | PostgreSQL 17.11 локально; PostgreSQL 16 проверяется CI после push |
