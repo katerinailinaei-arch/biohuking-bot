@@ -129,15 +129,16 @@
 
 **Готовое состояние:** Кети проходит калибровку с нуля; только явно подтверждённые правила попадают в bounded StyleContext.
 
-#### P2.T8. Calibration, StyleContext и approval-based learning — ⬜ NOT_STARTED
+#### P2.T8. Calibration, StyleContext и approval-based learning — 🟡 IN_PROGRESS
 
 - [ ] **P2.T8 завершена и имеет evidence.**
 - **Файлы:** create `domain/style.py`, `style/calibration.py`, `style/context.py`, `style/learning.py`; tests `tests/unit/style/test_calibration.py`, `test_context.py`, `tests/e2e/test_style_learning.py`.
 - **Тесты:** 8–10 topics, exactly 3 variants per topic, proposed-only inferred rules, explicit activation, bounded token/context selection, weekly repeated-edit proposal, holdouts.
 - **Зависит от:** Gate P1.
 - **Результат:** AC-12; 2/3 holdouts приняты без крупной правки, медиана рейтинга не ниже 4/5.
+- **Факт:** код и PostgreSQL persistence реализованы в `2f4758a..fa00816`; независимое ревью после четырёх fix-rounds = PASS; full pytest 256 passed, Alembic check/Ruff/strict mypy/Plan validator = PASS. Реальные calibration selections и три holdout-оценки Кети ещё не записаны, поэтому task checkbox и Gate P2 не закрыты.
 
-**Gate P2:** калибровка завершена Кети; active profile ссылается только на confirmed rules/examples; holdout gate пройден и сохранён в versioned eval report.
+**Gate P2 — ⏸ PENDING OWNER CALIBRATION:** калибровка должна быть завершена Кети; active profile ссылается только на confirmed rules/examples; holdout gate пройден и сохранён в versioned eval report. Автоматические fixtures подтвердили реализацию gate, но не заменяют решения владельца.
 
 ### P3. Безопасные источники и качественный дайджест
 
@@ -331,7 +332,7 @@ all gates ───────────────────────�
 |---|---|---|---|---|
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
-| P2 | T8: style calibration and learning | Код не создан | ⬜ NOT_STARTED | Gate P1; участие Кети в calibration/holdout |
+| P2 | T8: style calibration and learning | Implementation `2f4758a..fa00816`; independent review PASS; full pytest 256 passed; Alembic drift 0; Ruff/mypy clean. Owner calibration evidence ещё не создано | 🟡 IN_PROGRESS | Кети должна пройти 8–10 calibration topics и оценить 3 unseen holdouts; затем сохранить versioned eval report |
 | P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
 | P5 | T13: approval/schedule/publication | Код не создан | ⬜ NOT_STARTED | Gate P4; test Telegram channel для live gate |
@@ -359,6 +360,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-30T07:24:48Z | P2.T8 implementation | fa00816+worktree | Commits 2f4758a..fa00816; TDD RED missing style modules/repository/invariants; 4 fix rounds; independent review PASS; controller full pytest 256 passed in 45.33s; Alembic check no drift; Ruff clean; strict mypy 50 files; Plan validator OK. | Plan.md | Task/Gate P2 остаются IN_PROGRESS до реальных calibration selections и 3 holdout ratings Кети; fixtures не заменяют owner decision |
+| 2026-08-29T23:22:10Z | P2.T8 start | 1cc8d90+worktree | Gate P1 подтверждён; plan validator: PLAN_OK; baseline full pytest: 217 passed in 43.65s; начата TDD-реализация утверждённого style contract. | Plan.md | Реальная calibration/holdout требует решений Кети и не считается пройденной по unit/e2e fixtures |
 | 2026-08-29T20:19:39Z | P1 | 9afd740+worktree | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | Plan.md | Нет |
 | 2026-08-29T20:19:39Z | P1.T7 | 9afd740+worktree | Commits ff72cc4..9afd740; independent review PASS; strict 12-case versioned dataset, deterministic offline report, typed LLMProvider adapter, fail-closed exact-fixture activation and immutable rollback audit; focused eval 35 passed; fake CLI 12/12, schemas 100%, hard violations 0, safety 1.0, deterministic SHA 86839D...37D04. | Plan.md | Нет |
 | 2026-08-29T19:27:50Z | P1.T6 | cee3df1+worktree | Commits 41f8a6a..cee3df1; independent review PASS; strict provider-neutral Groq/OpenAI contract, definite-safe retries, quota circuit, one safe schema repair, Russian SafeError UX, redacted aggregate usage, OpenAI fail-closed; full pytest 182 passed in 36.83s; Ruff clean; strict mypy clean (39 files). | Plan.md | Нет |
