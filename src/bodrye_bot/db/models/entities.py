@@ -504,12 +504,22 @@ class StyleProfile(OwnedRecord, MutableRecord, Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("version >= 1", name="style_profile_version_positive"),
+        CheckConstraint(
+            "calibration_report_hash IS NULL OR "
+            "calibration_report_hash ~ '^[0-9a-f]{64}$'",
+            name="style_profile_calibration_hash_sha256",
+        ),
+        UniqueConstraint(
+            "owner_id", "calibration_report_id", name="uq_style_profile_owner_report"
+        ),
     )
 
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     activated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
     supersedes_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    calibration_report_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    calibration_report_hash: Mapped[str | None] = mapped_column(String(64))
 
 
 class StyleRule(OwnedRecord, MutableRecord, Base):
