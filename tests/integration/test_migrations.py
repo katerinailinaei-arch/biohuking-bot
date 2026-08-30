@@ -39,6 +39,7 @@ REQUIRED_TABLES = {
     "source_payload_cache",
     "sources",
     "style_examples",
+    "style_edit_observations",
     "style_profiles",
     "style_rules",
 }

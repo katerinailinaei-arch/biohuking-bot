@@ -143,6 +143,8 @@ class HoldoutResult:
     hard_rule_violations: int = 0
 
     def __post_init__(self) -> None:
+        if type(self.rating) is not int or type(self.hard_rule_violations) is not int:
+            raise ValueError("Holdout values must be exact integers")
         if not 1 <= self.rating <= 5:
             raise ValueError("Holdout rating must be between 1 and 5")
         if self.hard_rule_violations < 0:

@@ -20,6 +20,7 @@ from bodrye_bot.db.models.entities import (
     SourceDocument,
     SourceHealthEvent,
     SourcePayloadCache,
+    StyleEditObservation,
     StyleExample,
     StyleProfile,
     StyleRule,
@@ -46,6 +47,7 @@ __all__ = [
     "SourceHealthEvent",
     "SourcePayloadCache",
     "StyleExample",
+    "StyleEditObservation",
     "StyleProfile",
     "StyleRule",
 ]

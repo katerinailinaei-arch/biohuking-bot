@@ -23,6 +23,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -531,6 +532,16 @@ class StyleRule(OwnedRecord, MutableRecord, Base):
     origin: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     confirmed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    format: Mapped[str | None] = mapped_column(String(16))
+    risks: Mapped[list[str]] = mapped_column(
+        ARRAY(String(32)), nullable=False, default=list, server_default=sql_text("'{}'::varchar[]")
+    )
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)), nullable=False, default=list, server_default=text("'{}'::varchar[]")
+    )
+    pattern_key: Mapped[str] = mapped_column(
+        String(96), nullable=False, default="", server_default=text("''")
+    )
 
 
 class StyleExample(OwnedRecord, Base):
@@ -561,6 +572,29 @@ class StyleExample(OwnedRecord, Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False)
     rating: Mapped[int | None] = mapped_column(Integer)
     is_holdout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    risks: Mapped[list[str]] = mapped_column(
+        ARRAY(String(32)), nullable=False, default=list, server_default=sql_text("'{}'::varchar[]")
+    )
+
+
+class StyleEditObservation(OwnedRecord, Base):
+    __tablename__ = "style_edit_observations"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_style_edit_observation_id_owner"),
+        ForeignKeyConstraint(
+            ["profile_id", "owner_id"],
+            ["style_profiles.id", "style_profiles.owner_id"],
+            name="fk_style_edit_observation_profile_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "pattern_key ~ '^[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,63}$'",
+            name="style_edit_pattern_key_canonical",
+        ),
+    )
+
+    profile_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    pattern_key: Mapped[str] = mapped_column(String(96), nullable=False)
 
 
 class CostEvent(OwnedRecord, Base):

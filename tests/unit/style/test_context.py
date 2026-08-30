@@ -26,20 +26,20 @@ class InMemoryStyleContextRepository:
     examples: tuple[StyleExample, ...]
     requested_owner_ids: list[int]
 
-    def get_profile(self, *, owner_id: int, profile_id: UUID) -> StyleProfile:
+    async def get_profile(self, *, owner_id: int, profile_id: UUID) -> StyleProfile:
         self.requested_owner_ids.append(owner_id)
         assert profile_id == self.profile.id
         assert owner_id == self.profile.owner_id
         return self.profile
 
-    def active_rules(
+    async def active_rules(
         self, *, owner_id: int, profile_id: UUID
     ) -> tuple[StyleRule, ...]:
         assert owner_id == self.profile.owner_id
         assert profile_id == self.profile.id
         return self.rules
 
-    def approved_examples(
+    async def approved_examples(
         self, *, owner_id: int, profile_id: UUID
     ) -> tuple[StyleExample, ...]:
         assert owner_id == self.profile.owner_id
@@ -82,7 +82,8 @@ def _example(
     )
 
 
-def test_context_is_owner_scoped_deterministic_and_excludes_chat_history() -> None:
+@pytest.mark.asyncio
+async def test_context_is_owner_scoped_deterministic_and_excludes_chat_history() -> None:
     repository = InMemoryStyleContextRepository(
         profile=StyleProfile(
             id=PROFILE_ID,
@@ -117,7 +118,7 @@ def test_context_is_owner_scoped_deterministic_and_excludes_chat_history() -> No
     )
     builder = StyleContextBuilder(owner_id=42, repository=repository)
 
-    context = builder.build(
+    context = await builder.build(
         profile_id=PROFILE_ID,
         rubric="energy",
         format="post",
@@ -143,7 +144,8 @@ def test_context_is_owner_scoped_deterministic_and_excludes_chat_history() -> No
     assert "history" not in context.__dataclass_fields__
 
 
-def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_error() -> None:
+@pytest.mark.asyncio
+async def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_error() -> None:
     repository = InMemoryStyleContextRepository(
         profile=StyleProfile(
             id=PROFILE_ID,
@@ -157,7 +159,7 @@ def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_error() 
     )
 
     with pytest.raises(SafeError) as caught:
-        StyleContextBuilder(owner_id=42, repository=repository).build(
+        await StyleContextBuilder(owner_id=42, repository=repository).build(
             profile_id=PROFILE_ID,
             rubric="energy",
             format="post",
@@ -171,7 +173,8 @@ def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_error() 
     assert "Профиль стиля пока не готов" in caught.value.user_message
 
 
-def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_records() -> None:
+@pytest.mark.asyncio
+async def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_records() -> None:
     profile = StyleProfile(
         id=PROFILE_ID,
         owner_id=42,
@@ -197,7 +200,7 @@ def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_records
     )
 
     with pytest.raises(SafeError) as caught:
-        StyleContextBuilder(owner_id=42, repository=repository).build(
+        await StyleContextBuilder(owner_id=42, repository=repository).build(
             profile_id=PROFILE_ID,
             rubric="energy",
             format="post",
@@ -210,7 +213,8 @@ def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_records
     assert caught.value.code is SafeErrorCode.OWNER_FORBIDDEN
 
 
-def test_context_fails_closed_on_cross_profile_example_before_selection() -> None:
+@pytest.mark.asyncio
+async def test_context_fails_closed_on_cross_profile_example_before_selection() -> None:
     profile = StyleProfile(
         id=PROFILE_ID,
         owner_id=42,
@@ -238,7 +242,7 @@ def test_context_fails_closed_on_cross_profile_example_before_selection() -> Non
     )
 
     with pytest.raises(SafeError) as caught:
-        StyleContextBuilder(owner_id=42, repository=repository).build(
+        await StyleContextBuilder(owner_id=42, repository=repository).build(
             profile_id=PROFILE_ID,
             rubric="energy",
             format="post",
@@ -251,7 +255,8 @@ def test_context_fails_closed_on_cross_profile_example_before_selection() -> Non
     assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
 
 
-def test_context_filters_format_and_risk_and_bounds_negative_examples() -> None:
+@pytest.mark.asyncio
+async def test_context_filters_format_and_risk_and_bounds_negative_examples() -> None:
     profile = StyleProfile(
         id=PROFILE_ID,
         owner_id=42,
@@ -280,7 +285,7 @@ def test_context_filters_format_and_risk_and_bounds_negative_examples() -> None:
         requested_owner_ids=[],
     )
 
-    context = StyleContextBuilder(owner_id=42, repository=repository).build(
+    context = await StyleContextBuilder(owner_id=42, repository=repository).build(
         profile_id=PROFILE_ID,
         rubric="energy",
         format="post",

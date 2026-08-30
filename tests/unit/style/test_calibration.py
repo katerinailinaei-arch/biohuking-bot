@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from bodrye_bot.domain.errors import SafeError
 from bodrye_bot.domain.style import (
     CalibrationTopic,
     HoldoutPost,
@@ -30,9 +31,9 @@ def test_calibration_accepts_only_risk_diverse_eight_to_ten_topics_with_three_va
     calibration = service.start(_topics())
 
     assert calibration.topics == _topics()
-    with pytest.raises(ValueError, match="8 to 10"):
+    with pytest.raises(SafeError):
         service.start(_topics(count=7))
-    with pytest.raises(ValueError, match="exactly three"):
+    with pytest.raises(SafeError):
         service.start(
             (
                 CalibrationTopic(
@@ -65,7 +66,7 @@ def test_calibration_rejects_selected_or_duplicate_rejected_variants() -> None:
     service = CalibrationService()
     calibration = service.start(_topics())
 
-    with pytest.raises(ValueError, match="both selected and rejected"):
+    with pytest.raises(SafeError):
         service.record_feedback(
             calibration,
             topic_id="topic-0",
@@ -73,7 +74,7 @@ def test_calibration_rejects_selected_or_duplicate_rejected_variants() -> None:
             rejected_variants=(1,),
             edit=None,
         )
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(SafeError):
         service.record_feedback(
             calibration,
             topic_id="topic-0",
@@ -81,6 +82,23 @@ def test_calibration_rejects_selected_or_duplicate_rejected_variants() -> None:
             rejected_variants=(0, 0),
             edit=None,
         )
+
+
+def test_calibration_rejects_empty_feedback_with_safe_russian_error() -> None:
+    service = CalibrationService()
+
+    with pytest.raises(SafeError) as caught:
+        service.record_feedback(
+            service.start(_topics()),
+            topic_id="topic-0",
+            selected_variant=None,
+            rejected_variants=(),
+            edit="  ",
+        )
+
+    assert caught.value.code.value == "invalid_transition"
+    assert caught.value.trace_id
+    assert "Это действие сейчас недоступно" in caught.value.user_message
 
 
 def test_holdouts_are_exactly_three_unique_unseen_full_posts() -> None:
@@ -94,7 +112,7 @@ def test_holdouts_are_exactly_three_unique_unseen_full_posts() -> None:
 
     service.register_holdouts(calibration, holdouts)
 
-    with pytest.raises(ValueError, match="unseen"):
+    with pytest.raises(SafeError):
         service.register_holdouts(
             calibration,
             (
@@ -103,7 +121,7 @@ def test_holdouts_are_exactly_three_unique_unseen_full_posts() -> None:
                 holdouts[2],
             ),
         )
-    with pytest.raises(ValueError, match="three"):
+    with pytest.raises(SafeError):
         service.register_holdouts(calibration, holdouts[:2])
 
 
@@ -141,6 +159,19 @@ def test_holdout_result_rejects_values_outside_the_gate_domain(
 ) -> None:
     with pytest.raises(ValueError):
         HoldoutResult(
+            "invalid",
+            rating=rating,
+            accepted_without_rewrite=True,
+            hard_rule_violations=violations,
+        )
+
+
+@pytest.mark.parametrize("rating, violations", ((True, 0), (4.0, 0), (4, False)))
+def test_holdout_result_rejects_bool_and_float_numeric_values(
+    rating: object, violations: object
+) -> None:
+    with pytest.raises(ValueError, match="exact integers"):
+        HoldoutResult(  # type: ignore[arg-type]
             "invalid",
             rating=rating,
             accepted_without_rewrite=True,

@@ -17,13 +17,13 @@ from bodrye_bot.domain.style import (
 
 
 class StyleContextRepository(Protocol):
-    def get_profile(self, *, owner_id: int, profile_id: UUID) -> StyleProfile: ...
+    async def get_profile(self, *, owner_id: int, profile_id: UUID) -> StyleProfile: ...
 
-    def active_rules(
+    async def active_rules(
         self, *, owner_id: int, profile_id: UUID
     ) -> tuple[StyleRule, ...]: ...
 
-    def approved_examples(
+    async def approved_examples(
         self, *, owner_id: int, profile_id: UUID
     ) -> tuple[StyleExample, ...]: ...
 
@@ -33,7 +33,7 @@ class StyleContextBuilder:
         self._owner_id = owner_id
         self._repository = repository
 
-    def build(
+    async def build(
         self,
         profile_id: UUID,
         rubric: str,
@@ -44,7 +44,7 @@ class StyleContextBuilder:
         selected_angle: AngleBrief,
         medical_constraints: tuple[str, ...],
     ) -> StyleContext:
-        profile = self._repository.get_profile(
+        profile = await self._repository.get_profile(
             owner_id=self._owner_id, profile_id=profile_id
         )
         if profile.owner_id != self._owner_id:
@@ -56,10 +56,10 @@ class StyleContextBuilder:
             or profile.activated_at is None
         ):
             raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
-        active_rules = self._repository.active_rules(
+        active_rules = await self._repository.active_rules(
             owner_id=self._owner_id, profile_id=profile_id
         )
-        examples = self._repository.approved_examples(
+        examples = await self._repository.approved_examples(
             owner_id=self._owner_id, profile_id=profile_id
         )
         _validate_records(
@@ -87,7 +87,7 @@ class StyleContextBuilder:
             )[:5]
         )
         if len(positive_examples) < 3:
-            raise ValueError("Style context requires 3 to 5 approved positive examples")
+            raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         negative_examples = tuple(
             sorted(
                 (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.style import (
     CalibrationFeedback,
     CalibrationSession,
@@ -8,17 +9,21 @@ from bodrye_bot.domain.style import (
 )
 
 
+def _invalid() -> SafeError:
+    return SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+
+
 class CalibrationService:
     def start(self, topics: tuple[CalibrationTopic, ...]) -> CalibrationSession:
         if not 8 <= len(topics) <= 10:
-            raise ValueError("Calibration requires 8 to 10 topics")
+            raise _invalid()
         if len({topic.id for topic in topics}) != len(topics):
-            raise ValueError("Calibration topics must be unique")
+            raise _invalid()
         if len({topic.risk for topic in topics}) < 2:
-            raise ValueError("Calibration topics must be risk-diverse")
+            raise _invalid()
         for topic in topics:
             if len(topic.short_variants) != 3:
-                raise ValueError("Each topic requires exactly three short variants")
+                raise _invalid()
         return CalibrationSession(topics=topics)
 
     def record_feedback(
@@ -32,16 +37,18 @@ class CalibrationService:
     ) -> CalibrationFeedback:
         topic = next((item for item in calibration.topics if item.id == topic_id), None)
         if topic is None:
-            raise ValueError("Unknown calibration topic")
+            raise _invalid()
         indices = tuple(range(len(topic.short_variants)))
         if selected_variant is not None and selected_variant not in indices:
-            raise ValueError("Unknown selected variant")
+            raise _invalid()
         if any(index not in indices for index in rejected_variants):
-            raise ValueError("Unknown rejected variant")
+            raise _invalid()
         if len(set(rejected_variants)) != len(rejected_variants):
-            raise ValueError("Rejected variants must be unique")
+            raise _invalid()
         if selected_variant is not None and selected_variant in rejected_variants:
-            raise ValueError("A variant cannot be both selected and rejected")
+            raise _invalid()
+        if selected_variant is None and not rejected_variants and not (edit or "").strip():
+            raise _invalid()
         return CalibrationFeedback(
             topic_id=topic_id,
             selected_variant=selected_variant,
@@ -55,12 +62,12 @@ class CalibrationService:
         holdouts: tuple[HoldoutPost, ...],
     ) -> None:
         if len(holdouts) != 3:
-            raise ValueError("Exactly three holdouts are required")
+            raise _invalid()
         topic_ids = {holdout.topic_id for holdout in holdouts}
         if len(topic_ids) != 3:
-            raise ValueError("Holdout topics must be unique")
+            raise _invalid()
         calibrated_topic_ids = {topic.id for topic in calibration.topics}
         if topic_ids & calibrated_topic_ids:
-            raise ValueError("Holdout topics must be unseen")
+            raise _invalid()
         if any(not holdout.body.strip() for holdout in holdouts):
-            raise ValueError("Holdouts must be full posts")
+            raise _invalid()

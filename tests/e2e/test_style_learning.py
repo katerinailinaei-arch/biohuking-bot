@@ -93,6 +93,13 @@ class InMemoryStyleRuleRepository:
         self.audit.append(("confirmed", proposal.id))
         return confirmed
 
+    async def reject(self, *, owner_id: int, proposal: StyleRule) -> StyleRule:
+        self.calls.append(("reject", owner_id))
+        rejected = replace(proposal, status=RuleStatus.REJECTED)
+        self.rules[proposal.id] = rejected
+        self.audit.append(("rejected", proposal.id))
+        return rejected
+
 
 PROFILE_ID = uuid4()
 

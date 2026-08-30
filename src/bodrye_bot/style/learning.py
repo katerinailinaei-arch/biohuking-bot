@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -24,13 +23,11 @@ class StyleRuleRepository(Protocol):
 
     async def get(self, *, owner_id: int, rule_id: UUID) -> StyleRule: ...
 
-    async def save(self, rule: StyleRule) -> None: ...
-
     async def active_rules(
         self, *, owner_id: int, profile_id: UUID
     ) -> list[StyleRule]: ...
 
-    async def record_audit(self, *, action: str, rule_id: UUID) -> None: ...
+    async def reject(self, *, owner_id: int, proposal: StyleRule) -> StyleRule: ...
 
     async def confirm_and_supersede(
         self,
@@ -73,7 +70,13 @@ class StyleLearningService:
             pattern_key=edit.pattern_key,
         )
         if existing is not None:
-            _validate_rule(existing, owner_id=owner_id, profile_id=edit.profile_id)
+            _validate_rule(
+                existing,
+                owner_id=owner_id,
+                profile_id=edit.profile_id,
+                pattern_key=edit.pattern_key,
+                status=RuleStatus.PROPOSED,
+            )
             return existing
         proposal = StyleRule(
             id=uuid4(),
@@ -111,7 +114,7 @@ class StyleLearningService:
     ) -> StyleRule:
         self._owner_guard.authorize(owner_id)
         proposal = await self._repository.get(owner_id=owner_id, rule_id=rule_id)
-        _validate_rule(proposal, owner_id=owner_id)
+        _validate_rule(proposal, owner_id=owner_id, rule_id=rule_id)
         if proposal.status is not RuleStatus.PROPOSED:
             raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
         conflict: StyleRule | None = None
@@ -119,7 +122,12 @@ class StyleLearningService:
             conflict = await self._repository.get(
                 owner_id=owner_id, rule_id=conflict_rule_id
             )
-            _validate_rule(conflict, owner_id=owner_id, profile_id=proposal.profile_id)
+            _validate_rule(
+                conflict,
+                owner_id=owner_id,
+                profile_id=proposal.profile_id,
+                rule_id=conflict_rule_id,
+            )
             if conflict.status is not RuleStatus.ACTIVE:
                 raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
             if conflict.scope is not proposal.scope:
@@ -135,27 +143,55 @@ class StyleLearningService:
             conflict=conflict,
             confirmed_at=self._clock(),
         )
-        _validate_rule(confirmed, owner_id=owner_id, profile_id=proposal.profile_id)
-        if confirmed.status is not RuleStatus.ACTIVE or confirmed.confirmed_at is None:
+        _validate_rule(
+            confirmed,
+            owner_id=owner_id,
+            profile_id=proposal.profile_id,
+            rule_id=proposal.id,
+            pattern_key=proposal.pattern_key,
+            scope=proposal.scope,
+            status=RuleStatus.ACTIVE,
+        )
+        if confirmed.confirmed_at is None:
             raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         return confirmed
 
     async def reject_rule(self, *, owner_id: int, rule_id: UUID) -> StyleRule:
         self._owner_guard.authorize(owner_id)
         proposal = await self._repository.get(owner_id=owner_id, rule_id=rule_id)
-        _validate_rule(proposal, owner_id=owner_id)
+        _validate_rule(proposal, owner_id=owner_id, rule_id=rule_id)
         if proposal.status is not RuleStatus.PROPOSED:
             raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
-        rejected = replace(proposal, status=RuleStatus.REJECTED)
-        await self._repository.save(rejected)
-        await self._repository.record_audit(action="rejected", rule_id=rejected.id)
+        rejected = await self._repository.reject(owner_id=owner_id, proposal=proposal)
+        _validate_rule(
+            rejected,
+            owner_id=owner_id,
+            profile_id=proposal.profile_id,
+            rule_id=proposal.id,
+            pattern_key=proposal.pattern_key,
+            scope=proposal.scope,
+            status=RuleStatus.REJECTED,
+        )
         return rejected
 
 
 def _validate_rule(
-    rule: StyleRule, *, owner_id: int, profile_id: UUID | None = None
+    rule: StyleRule,
+    *,
+    owner_id: int,
+    profile_id: UUID | None = None,
+    rule_id: UUID | None = None,
+    pattern_key: str | None = None,
+    scope: RuleScope | None = None,
+    status: RuleStatus | None = None,
 ) -> None:
-    if rule.owner_id != owner_id:
+    if rule.owner_id != owner_id or (rule_id is not None and rule.id != rule_id):
         raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
     if profile_id is not None and rule.profile_id != profile_id:
         raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
+    if (
+        (pattern_key is not None and rule.pattern_key != pattern_key)
+        or (scope is not None and rule.scope is not scope)
+        or (status is not None and rule.status is not status)
+    ):
+        raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
