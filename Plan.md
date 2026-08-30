@@ -129,16 +129,16 @@
 
 **Готовое состояние:** Кети проходит калибровку с нуля; только явно подтверждённые правила попадают в bounded StyleContext.
 
-#### P2.T8. Calibration, StyleContext и approval-based learning — 🟡 IN_PROGRESS
+#### P2.T8. Calibration, StyleContext и approval-based learning — ✅ DONE
 
-- [ ] **P2.T8 завершена и имеет evidence.**
-- **Файлы:** create `domain/style.py`, `style/calibration.py`, `style/context.py`, `style/learning.py`; tests `tests/unit/style/test_calibration.py`, `test_context.py`, `tests/e2e/test_style_learning.py`.
+- [x] **P2.T8 завершена и имеет evidence.**
+- **Файлы:** create `domain/style.py`, `style/calibration.py`, `style/context.py`, `style/learning.py`, `style/report.py`, `db/repositories/style.py`, migrations `0005`–`0008`, `evals/style/keti-calibration-v1.json`; unit/e2e/PostgreSQL integration tests.
 - **Тесты:** 8–10 topics, exactly 3 variants per topic, proposed-only inferred rules, explicit activation, bounded token/context selection, weekly repeated-edit proposal, holdouts.
 - **Зависит от:** Gate P1.
 - **Результат:** AC-12; 2/3 holdouts приняты без крупной правки, медиана рейтинга не ниже 4/5.
-- **Факт:** код и PostgreSQL persistence реализованы в `2f4758a..fa00816`; независимое ревью после четырёх fix-rounds = PASS; full pytest 256 passed, Alembic check/Ruff/strict mypy/Plan validator = PASS. Реальные calibration selections и три holdout-оценки Кети ещё не записаны, поэтому task checkbox и Gate P2 не закрыты.
+- **Факт:** реализация `2f4758a..aa051da`; Кети прошла 8 тем, отдельно подтвердила 5 правил и приняла 3/3 unseen holdouts с оценками 5/5. Versioned report `evals/style/keti-calibration-v1.json` связан с active profile доверенным SHA-256; непринятые примеры и неподтверждённые правила не активируются. Независимое финальное ревью = PASS; full pytest 276 passed; Alembic check/Ruff/strict mypy/Plan validator = PASS.
 
-**Gate P2 — ⏸ PENDING OWNER CALIBRATION:** калибровка должна быть завершена Кети; active profile ссылается только на confirmed rules/examples; holdout gate пройден и сохранён в versioned eval report. Автоматические fixtures подтвердили реализацию gate, но не заменяют решения владельца.
+**Gate P2 — ✅ PASS:** owner calibration = 8/8 тем; confirmed rules = 5/5; holdouts = 3/3 приняты без полной переработки; медиана = 5/5; hard style violations = 0. Active profile допускается только с trusted immutable calibration report и передаёт только confirmed rules и 3–5 approved examples. Независимое ревью, PostgreSQL transaction/race/rollback tests, full pytest 276, Alembic check, Ruff, strict mypy и `check_plan.py` прошли.
 
 ### P3. Безопасные источники и качественный дайджест
 
@@ -332,8 +332,8 @@ all gates ───────────────────────�
 |---|---|---|---|---|
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
-| P2 | T8: style calibration and learning | Implementation `2f4758a..fa00816`; independent review PASS; full pytest 256 passed; Alembic drift 0; Ruff/mypy clean. Owner calibration evidence ещё не создано | 🟡 IN_PROGRESS | Кети должна пройти 8–10 calibration topics и оценить 3 unseen holdouts; затем сохранить versioned eval report |
-| P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Gate P2; утверждённый source registry |
+| P2 | T8: style calibration and learning | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | ✅ DONE | Нет |
+| P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Утверждённый source registry из MVP-spec; Gate P2 пройден |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
 | P5 | T13: approval/schedule/publication | Код не создан | ⬜ NOT_STARTED | Gate P4; test Telegram channel для live gate |
 | P6 | T14–T16: deletion, costs, health, backup, deploy | Код не создан | ⬜ NOT_STARTED | Gate P5; Beget/S3/age inputs для live gate |
@@ -360,6 +360,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-30T09:46:04Z | P2 | aa051da+worktree | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | Plan.md | Нет |
+| 2026-08-30T09:46:04Z | P2.T8 | aa051da+worktree | Implementation 2f4758a..aa051da; Keti completed 8 calibration topics, explicitly confirmed 5 rules and rated 3 unseen holdouts 5/5 with 3/3 accepted; trusted report SHA-256 10719718c2118ed1a3d0823051c9f6bcb949adc876fc3d48e9a3f46a1aea4dc1; independent final review PASS; full pytest 276 passed; Alembic check no drift; Ruff and strict mypy clean. | evals/style/keti-calibration-v1.json | Нет |
 | 2026-08-30T07:24:48Z | P2.T8 implementation | fa00816+worktree | Commits 2f4758a..fa00816; TDD RED missing style modules/repository/invariants; 4 fix rounds; independent review PASS; controller full pytest 256 passed in 45.33s; Alembic check no drift; Ruff clean; strict mypy 50 files; Plan validator OK. | Plan.md | Task/Gate P2 остаются IN_PROGRESS до реальных calibration selections и 3 holdout ratings Кети; fixtures не заменяют owner decision |
 | 2026-08-29T23:22:10Z | P2.T8 start | 1cc8d90+worktree | Gate P1 подтверждён; plan validator: PLAN_OK; baseline full pytest: 217 passed in 43.65s; начата TDD-реализация утверждённого style contract. | Plan.md | Реальная calibration/holdout требует решений Кети и не считается пройденной по unit/e2e fixtures |
 | 2026-08-29T20:19:39Z | P1 | 9afd740+worktree | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | Plan.md | Нет |
