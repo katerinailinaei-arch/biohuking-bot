@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Protocol
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from bodrye_bot.domain.style import (
     StyleProfileStatus,
     StyleRule,
 )
+
+_SHA256_LOWERHEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class StyleContextRepository(Protocol):
@@ -54,6 +57,9 @@ class StyleContextBuilder:
         if (
             profile.status is not StyleProfileStatus.ACTIVE
             or profile.activated_at is None
+            or profile.calibration_report_id is None
+            or profile.calibration_report_hash is None
+            or _SHA256_LOWERHEX.fullmatch(profile.calibration_report_hash) is None
         ):
             raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         active_rules = await self._repository.active_rules(

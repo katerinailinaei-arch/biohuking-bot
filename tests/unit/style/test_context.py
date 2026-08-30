@@ -64,6 +64,8 @@ def _rule(*, scope: RuleScope, text: str, format: str | None = None) -> StyleRul
 
 
 PROFILE_ID = uuid4()
+CALIBRATION_REPORT_ID = uuid4()
+CALIBRATION_REPORT_HASH = "a" * 64
 
 
 def _example(
@@ -91,6 +93,8 @@ async def test_context_is_owner_scoped_deterministic_and_excludes_chat_history()
             version=1,
             status=StyleProfileStatus.ACTIVE,
             activated_at=datetime.now(UTC),
+            calibration_report_id=CALIBRATION_REPORT_ID,
+            calibration_report_hash=CALIBRATION_REPORT_HASH,
         ),
         rules=(
             _rule(scope=RuleScope.HARD, text="Не обещать лечение."),
@@ -154,7 +158,11 @@ async def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_er
             status=StyleProfileStatus.CALIBRATING,
         ),
         rules=(),
-        examples=(),
+        examples=(
+            _example(text="A", tags=("sleep",), rating=5),
+            _example(text="B", tags=("sleep",), rating=5),
+            _example(text="C", tags=("sleep",), rating=4),
+        ),
         requested_owner_ids=[],
     )
 
@@ -174,6 +182,40 @@ async def test_context_rejects_a_profile_that_is_not_active_with_safe_russian_er
 
 
 @pytest.mark.asyncio
+async def test_context_rejects_active_profile_without_report_binding() -> None:
+    """Removing a persisted calibration binding must block style use."""
+    repository = InMemoryStyleContextRepository(
+        profile=StyleProfile(
+            id=PROFILE_ID,
+            owner_id=42,
+            version=1,
+            status=StyleProfileStatus.ACTIVE,
+            activated_at=datetime.now(UTC),
+        ),
+        rules=(),
+        examples=(
+            _example(text="A", tags=("sleep",), rating=5),
+            _example(text="B", tags=("sleep",), rating=5),
+            _example(text="C", tags=("sleep",), rating=4),
+        ),
+        requested_owner_ids=[],
+    )
+
+    with pytest.raises(SafeError) as caught:
+        await StyleContextBuilder(owner_id=42, repository=repository).build(
+            profile_id=PROFILE_ID,
+            rubric="energy",
+            format="post",
+            risk="medium",
+            tags=("sleep",),
+            selected_angle=AngleBrief(id="angle", name="Практично"),
+            medical_constraints=(),
+        )
+
+    assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
+
+
+@pytest.mark.asyncio
 async def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_records() -> None:
     profile = StyleProfile(
         id=PROFILE_ID,
@@ -181,6 +223,8 @@ async def test_context_fails_closed_on_cross_owner_or_cross_profile_repository_r
         version=1,
         status=StyleProfileStatus.ACTIVE,
         activated_at=datetime.now(UTC),
+        calibration_report_id=CALIBRATION_REPORT_ID,
+        calibration_report_hash=CALIBRATION_REPORT_HASH,
     )
     contaminated_rule = StyleRule(
         id=uuid4(),
@@ -221,6 +265,8 @@ async def test_context_fails_closed_on_cross_profile_example_before_selection() 
         version=1,
         status=StyleProfileStatus.ACTIVE,
         activated_at=datetime.now(UTC),
+        calibration_report_id=CALIBRATION_REPORT_ID,
+        calibration_report_hash=CALIBRATION_REPORT_HASH,
     )
     repository = InMemoryStyleContextRepository(
         profile=profile,
@@ -263,6 +309,8 @@ async def test_context_filters_format_and_risk_and_bounds_negative_examples() ->
         version=1,
         status=StyleProfileStatus.ACTIVE,
         activated_at=datetime.now(UTC),
+        calibration_report_id=CALIBRATION_REPORT_ID,
+        calibration_report_hash=CALIBRATION_REPORT_HASH,
     )
     negatives = tuple(
         _example(text=f"negative-{index}", tags=("sleep",), rating=3)

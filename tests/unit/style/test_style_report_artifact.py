@@ -94,6 +94,23 @@ def test_loader_recomputes_gate_and_rejects_failed_gate(tmp_path: Path) -> None:
     assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
 
 
+def test_loader_rejects_positive_example_that_owner_rewrote_even_if_rating_is_high(
+    tmp_path: Path,
+) -> None:
+    """Changing the acceptance flag must make an otherwise high-rated example unusable."""
+    payload = _artifact()
+    holdouts = payload["holdouts"]
+    assert isinstance(holdouts, list)
+    assert isinstance(holdouts[0], dict)
+    holdouts[0]["accepted_without_rewrite"] = False
+    _rehash(payload)
+
+    with pytest.raises(SafeError) as caught:
+        load_calibration_report(_write(tmp_path, payload))
+
+    assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
+
+
 def test_loader_ignores_stored_passed_flag_and_uses_recomputed_result(tmp_path: Path) -> None:
     payload = _artifact()
     reported = payload["reported_gate"]

@@ -57,6 +57,8 @@ async def test_style_repository_round_trips_all_context_and_learning_fields(
                     version=profile_id.int % 2_000_000_000 + 1,
                     status="active",
                     activated_at=datetime.now(UTC),
+                    calibration_report_id=uuid4(),
+                    calibration_report_hash="a" * 64,
                 )
             )
             repository = SqlAlchemyStyleRepository(
@@ -264,6 +266,9 @@ async def test_style_repository_maps_concurrent_duplicate_example_integrity_erro
                     owner_id=42,
                     version=profile_id.int % 2_000_000_000 + 1,
                     status="active",
+                    activated_at=datetime.now(UTC),
+                    calibration_report_id=uuid4(),
+                    calibration_report_hash="b" * 64,
                 )
             )
 
@@ -312,6 +317,8 @@ async def test_style_repository_is_owner_scoped_and_atomic_for_confirmation_and_
                     version=profile_id.int % 2_000_000_000 + 1,
                     status="active",
                     activated_at=datetime.now(UTC),
+                    calibration_report_id=uuid4(),
+                    calibration_report_hash="c" * 64,
                 )
             )
             audit = SqlAlchemyAuditWriter(session, ensure_active=lambda: None)

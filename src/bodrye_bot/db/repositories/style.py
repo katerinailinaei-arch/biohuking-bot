@@ -62,6 +62,8 @@ class SqlAlchemyStyleRepository:
             version=profile.version,
             status=StyleProfileStatus(profile.status),
             activated_at=profile.activated_at,
+            calibration_report_id=profile.calibration_report_id,
+            calibration_report_hash=profile.calibration_report_hash,
         )
 
     async def active_rules(

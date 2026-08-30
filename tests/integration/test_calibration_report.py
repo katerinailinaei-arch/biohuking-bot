@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -32,7 +33,9 @@ async def test_apply_report_is_transactional_idempotent_and_builds_bounded_conte
 ) -> None:
     report = _fresh_report(tmp_path)
     applier = CalibrationReportApplier(
-        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
     )
     first = await applier.apply(owner_id=42, report=report)
     second = await applier.apply(owner_id=42, report=report)
@@ -106,6 +109,7 @@ async def test_apply_report_rolls_back_everything_when_audit_fails(
         session_factory=session_factory,
         owner_guard=OwnerGuard(owner_id=42),
         audit_factory=audit_factory,
+        trusted_report_hashes={report.schema_version: report.content_hash},
     )
     with pytest.raises(SafeError) as caught:
         await applier.apply(owner_id=42, report=report)
@@ -126,7 +130,9 @@ async def test_apply_report_rejects_foreign_owner_without_disclosing_profile(
 ) -> None:
     report = _fresh_report(tmp_path)
     applier = CalibrationReportApplier(
-        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
     )
 
     with pytest.raises(SafeError) as caught:
@@ -149,12 +155,98 @@ async def test_reapplying_same_report_identity_with_different_hash_fails_closed(
     changed_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     changed = load_calibration_report(changed_path)
     applier = CalibrationReportApplier(
-        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
     )
     await applier.apply(owner_id=42, report=report)
     with pytest.raises(SafeError) as caught:
         await applier.apply(owner_id=42, report=changed)
     assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_rehashed_changed_report_before_any_profile_exists(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """A self-recomputed hash is not authority to activate a changed artifact."""
+    report = _fresh_report(tmp_path)
+    payload = _payload_for_report(report)
+    rules = payload["confirmed_rules"]
+    assert isinstance(rules, list) and isinstance(rules[0], dict)
+    rules[0]["text"] = "Подменённое правило."
+    payload["content_hash"] = canonical_report_hash(payload)
+    changed_path = tmp_path / "rehash-before-first-apply.json"
+    changed_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    changed = load_calibration_report(changed_path)
+    applier = CalibrationReportApplier(
+        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+    )
+
+    with pytest.raises(SafeError) as caught:
+        await applier.apply(owner_id=42, report=changed)
+
+    assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
+    async with session_factory() as session:
+        assert await session.get(StyleProfile, changed.profile_id) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_rehashed_mutable_rule_without_any_prior_activation(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """The versioned trusted digest, not the artifact's own hash, authorizes activation."""
+    payload: dict[str, Any] = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+    rules = payload["confirmed_rules"]
+    assert isinstance(rules, list) and isinstance(rules[0], dict)
+    rules[0]["text"] = "Незаметно подменённое правило."
+    payload["content_hash"] = canonical_report_hash(payload)
+    changed_path = tmp_path / "mutated-trusted-artifact.json"
+    changed_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    changed = load_calibration_report(changed_path)
+    applier = CalibrationReportApplier(
+        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+    )
+
+    with pytest.raises(SafeError) as caught:
+        await applier.apply(owner_id=42, report=changed)
+
+    assert caught.value.code is SafeErrorCode.STYLE_PROFILE_NOT_READY
+    async with session_factory() as session:
+        assert await session.get(StyleProfile, changed.profile_id) is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_apply_of_same_report_creates_one_atomic_activation(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """Two real sessions applying one report must converge without duplicate audit rows."""
+    report = _fresh_report(tmp_path)
+    first_applier = CalibrationReportApplier(
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
+    )
+    second_applier = CalibrationReportApplier(
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
+    )
+
+    first, second = await asyncio.gather(
+        first_applier.apply(owner_id=42, report=report),
+        second_applier.apply(owner_id=42, report=report),
+    )
+
+    assert first == report.profile_id
+    assert second == report.profile_id
+    async with session_factory() as session:
+        assert await session.scalar(
+            select(func.count()).select_from(AuditEvent).where(
+                AuditEvent.owner_id == 42,
+                AuditEvent.object_id == report.profile_id,
+            )
+        ) == 1
 
 
 @pytest.mark.asyncio
@@ -188,7 +280,9 @@ async def test_apply_report_refuses_nonempty_calibrating_profile_without_partial
                 )
             )
     applier = CalibrationReportApplier(
-        session_factory=session_factory, owner_guard=OwnerGuard(owner_id=42)
+        session_factory=session_factory,
+        owner_guard=OwnerGuard(owner_id=42),
+        trusted_report_hashes={report.schema_version: report.content_hash},
     )
 
     with pytest.raises(SafeError) as caught:

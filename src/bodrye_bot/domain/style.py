@@ -53,6 +53,8 @@ class StyleProfile:
     version: int
     status: StyleProfileStatus = StyleProfileStatus.CALIBRATING
     activated_at: datetime | None = None
+    calibration_report_id: UUID | None = None
+    calibration_report_hash: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", StyleProfileStatus(self.status))

@@ -269,6 +269,80 @@ def test_style_metadata_matches_idempotency_constraints() -> None:
     )
 
 
+def test_0008_preflight_rejects_legacy_active_profile_without_calibration_binding() -> None:
+    """0008 must fail rather than silently bless an unbound active profile."""
+    assert TEST_DATABASE_URL is not None
+    profile_id = str(uuid4())
+    config = _alembic_config()
+    command.downgrade(config, "0007_style_calibration_report")
+    try:
+        async def seed() -> None:
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO style_profiles "
+                            "(id, owner_id, created_at, updated_at, version, status, activated_at) "
+                            "VALUES (:profile_id, 42, now(), now(), 1, 'active', now())"
+                        ),
+                        {"profile_id": profile_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed())
+        expected_error = (
+            "style migration preflight failed: active style profiles require "
+            "calibration report binding"
+        )
+        with pytest.raises(Exception, match=expected_error):
+            command.upgrade(config, "head")
+    finally:
+        try:
+            asyncio.run(_cleanup_style_fixture(profile_id))
+        finally:
+            command.upgrade(config, "head")
+
+
+def test_0008_preflight_rejects_unpaired_legacy_calibration_fields() -> None:
+    """0008 must not silently discard half of a report binding."""
+    assert TEST_DATABASE_URL is not None
+    profile_id = str(uuid4())
+    report_id = str(uuid4())
+    config = _alembic_config()
+    command.downgrade(config, "0007_style_calibration_report")
+    try:
+        async def seed() -> None:
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO style_profiles "
+                            "(id, owner_id, created_at, updated_at, version, status, "
+                            "calibration_report_id) "
+                            "VALUES (:profile_id, 42, now(), now(), 1, 'calibrating', "
+                            ":report_id)"
+                        ),
+                        {"profile_id": profile_id, "report_id": report_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed())
+        with pytest.raises(
+            Exception,
+            match="style migration preflight failed: calibration report id/hash must be paired",
+        ):
+            command.upgrade(config, "head")
+    finally:
+        try:
+            asyncio.run(_cleanup_style_fixture(profile_id))
+        finally:
+            command.upgrade(config, "head")
+
+
 def test_upgrade_from_0005_accepts_legacy_empty_pattern_keys() -> None:
     assert TEST_DATABASE_URL is not None
     profile_id = str(uuid4())

@@ -509,6 +509,16 @@ class StyleProfile(OwnedRecord, MutableRecord, Base):
             "calibration_report_hash ~ '^[0-9a-f]{64}$'",
             name="style_profile_calibration_hash_sha256",
         ),
+        CheckConstraint(
+            "(calibration_report_id IS NULL) = (calibration_report_hash IS NULL)",
+            name="style_profile_calibration_report_pair",
+        ),
+        CheckConstraint(
+            "status <> 'active' OR (activated_at IS NOT NULL "
+            "AND calibration_report_id IS NOT NULL "
+            "AND calibration_report_hash IS NOT NULL)",
+            name="style_profile_active_calibration_bound",
+        ),
         UniqueConstraint(
             "owner_id", "calibration_report_id", name="uq_style_profile_owner_report"
         ),

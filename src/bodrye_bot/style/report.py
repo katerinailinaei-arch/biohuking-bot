@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bodrye_bot.db.models import StyleExample as StyleExampleModel
@@ -26,6 +29,15 @@ from bodrye_bot.operations.audit import (
     AuditObjectType,
     SqlAlchemyAuditWriter,
 )
+
+# This is a release-controlled digest, distinct from the untrusted hash carried
+# by the JSON itself. Updating the artifact requires an explicit code review.
+TRUSTED_CALIBRATION_REPORT_HASHES: Mapping[str, str] = MappingProxyType(
+    {
+        "style-calibration-v1": "10719718c2118ed1a3d0823051c9f6bcb949adc876fc3d48e9a3f46a1aea4dc1"
+    }
+)
+_SHA256_LOWERHEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class _StrictModel(BaseModel):
@@ -206,7 +218,11 @@ def _validate_artifact(artifact: _CalibrationArtifact) -> StyleGateDecision:
         raise _not_ready("3-5 distinct positive examples required")
     if not set(positive_ids) <= holdout_ids:
         raise _not_ready("positive examples must reference holdouts")
-    accepted = {item.id for item in artifact.holdouts if item.rating >= 4}
+    accepted = {
+        item.id
+        for item in artifact.holdouts
+        if item.rating >= 4 and item.accepted_without_rewrite
+    }
     if not set(positive_ids) <= accepted:
         raise _not_ready("positive examples must be owner-approved")
 
@@ -240,6 +256,7 @@ class CalibrationReportApplier:
         owner_guard: OwnerGuard,
         audit_factory: AuditFactory | None = None,
         clock: Callable[[], datetime] | None = None,
+        trusted_report_hashes: Mapping[str, str] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._owner_guard = owner_guard
@@ -249,18 +266,30 @@ class CalibrationReportApplier:
             )
         )
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._trusted_report_hashes = (
+            TRUSTED_CALIBRATION_REPORT_HASHES
+            if trusted_report_hashes is None
+            else dict(trusted_report_hashes)
+        )
 
     async def apply(
         self, *, owner_id: int, report: ValidatedCalibrationReport
     ) -> UUID:
         self._owner_guard.authorize(owner_id)
+        _require_trusted_digest(report, self._trusted_report_hashes)
         _revalidate_report(report)
         try:
             async with self._session_factory() as session:
                 async with session.begin():
-                    return await self._apply_in_transaction(
-                        session=session, owner_id=owner_id, report=report
-                    )
+                    try:
+                        async with session.begin_nested():
+                            return await self._apply_in_transaction(
+                                session=session, owner_id=owner_id, report=report
+                            )
+                    except IntegrityError:
+                        return await self._recover_concurrent_apply(
+                            session=session, owner_id=owner_id, report=report
+                        )
         except SafeError:
             raise
         except Exception as exc:
@@ -276,6 +305,14 @@ class CalibrationReportApplier:
         owner_id: int,
         report: ValidatedCalibrationReport,
     ) -> UUID:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {
+                "lock_key": (
+                    f"style-calibration:{owner_id}:{report.profile_id}:{report.report_id}"
+                )
+            },
+        )
         existing = await session.scalar(
             select(StyleProfileModel)
             .where(StyleProfileModel.id == report.profile_id)
@@ -392,6 +429,28 @@ class CalibrationReportApplier:
         await session.flush()
         return profile.id
 
+    async def _recover_concurrent_apply(
+        self,
+        *,
+        session: AsyncSession,
+        owner_id: int,
+        report: ValidatedCalibrationReport,
+    ) -> UUID:
+        existing = await session.scalar(
+            select(StyleProfileModel).where(StyleProfileModel.id == report.profile_id)
+        )
+        if existing is not None:
+            if existing.owner_id != owner_id:
+                raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
+            if (
+                existing.calibration_report_id == report.report_id
+                and existing.calibration_report_hash == report.content_hash
+                and existing.status == "active"
+                and existing.activated_at is not None
+            ):
+                return existing.id
+        raise _not_ready("concurrent calibration profile/report conflict")
+
 
 def _revalidate_report(report: ValidatedCalibrationReport) -> None:
     try:
@@ -416,6 +475,18 @@ def _revalidate_report(report: ValidatedCalibrationReport) -> None:
         raise
     except (ValidationError, ValueError) as exc:
         raise _not_ready(type(exc).__name__) from None
+
+
+def _require_trusted_digest(
+    report: ValidatedCalibrationReport, trusted_report_hashes: Mapping[str, str]
+) -> None:
+    expected_digest = trusted_report_hashes.get(report.schema_version)
+    if (
+        expected_digest is None
+        or _SHA256_LOWERHEX.fullmatch(expected_digest) is None
+        or expected_digest != report.content_hash
+    ):
+        raise _not_ready("calibration artifact digest is not trusted")
 
 
 __all__ = [
