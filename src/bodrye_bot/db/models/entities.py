@@ -518,6 +518,14 @@ class StyleRule(OwnedRecord, MutableRecord, Base):
         UniqueConstraint("id", "owner_id", name="uq_style_rule_id_owner"),
         CheckConstraint("cardinality(risks) <= 16", name="style_rule_risks_bounded"),
         CheckConstraint("cardinality(tags) <= 32", name="style_rule_tags_bounded"),
+        Index(
+            "uq_style_rule_proposed_pattern",
+            "owner_id",
+            "profile_id",
+            "pattern_key",
+            unique=True,
+            postgresql_where=text("status = 'proposed' AND pattern_key <> ''"),
+        ),
         ForeignKeyConstraint(
             ["profile_id", "owner_id"],
             ["style_profiles.id", "style_profiles.owner_id"],

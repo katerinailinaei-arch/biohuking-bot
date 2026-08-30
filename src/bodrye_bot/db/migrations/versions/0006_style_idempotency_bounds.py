@@ -15,6 +15,57 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM style_rules WHERE cardinality(risks) > 16
+            ) THEN
+                RAISE EXCEPTION USING MESSAGE = concat(
+                    'style migration preflight failed: ',
+                    'style_rules.risks exceeds 16 items'
+                );
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM style_rules WHERE cardinality(tags) > 32
+            ) THEN
+                RAISE EXCEPTION USING MESSAGE = concat(
+                    'style migration preflight failed: ',
+                    'style_rules.tags exceeds 32 items'
+                );
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM style_examples WHERE cardinality(risks) > 16
+            ) THEN
+                RAISE EXCEPTION USING MESSAGE = concat(
+                    'style migration preflight failed: ',
+                    'style_examples.risks exceeds 16 items'
+                );
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM style_examples WHERE cardinality(tags) > 32
+            ) THEN
+                RAISE EXCEPTION USING MESSAGE = concat(
+                    'style migration preflight failed: ',
+                    'style_examples.tags exceeds 32 items'
+                );
+            END IF;
+            IF EXISTS (
+                SELECT 1
+                FROM style_rules
+                WHERE status = 'proposed' AND pattern_key <> ''
+                GROUP BY owner_id, profile_id, pattern_key
+                HAVING count(*) > 1
+            ) THEN
+                RAISE EXCEPTION USING MESSAGE = concat(
+                    'style migration preflight failed: ',
+                    'duplicate proposed nonempty pattern_key'
+                );
+            END IF;
+        END $$;
+        """
+    )
     op.add_column(
         "style_edit_observations", sa.Column("source_edit_id", sa.Uuid(), nullable=True)
     )
@@ -39,7 +90,7 @@ def upgrade() -> None:
         "style_rules",
         ["owner_id", "profile_id", "pattern_key"],
         unique=True,
-        postgresql_where=sa.text("status = 'proposed'"),
+        postgresql_where=sa.text("status = 'proposed' AND pattern_key <> ''"),
     )
 
 

@@ -104,7 +104,14 @@ class StyleLearningService:
             owner_id=owner_id, profile_id=profile_id
         )
         for rule in rules:
-            _validate_rule(rule, owner_id=owner_id, profile_id=profile_id)
+            _validate_rule(
+                rule,
+                owner_id=owner_id,
+                profile_id=profile_id,
+                status=RuleStatus.ACTIVE,
+            )
+            if rule.confirmed_at is None:
+                raise SafeError.for_code(SafeErrorCode.STYLE_PROFILE_NOT_READY)
         return rules
 
     async def confirm_rule(

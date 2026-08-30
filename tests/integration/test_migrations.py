@@ -5,13 +5,15 @@ import importlib
 import importlib.util
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -119,6 +121,50 @@ def _snapshot() -> tuple[set[str], dict[str, set[str]]]:
     return asyncio.run(_database_snapshot())
 
 
+async def _cleanup_style_fixture(profile_id: str) -> None:
+    assert TEST_DATABASE_URL is not None
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM style_examples WHERE profile_id = :profile_id"),
+                {"profile_id": profile_id},
+            )
+            await connection.execute(
+                text("DELETE FROM style_rules WHERE profile_id = :profile_id"),
+                {"profile_id": profile_id},
+            )
+            await connection.execute(
+                text(
+                    "DELETE FROM style_profiles "
+                    "WHERE id = :profile_id AND owner_id = 42"
+                ),
+                {"profile_id": profile_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+def _run_style_migration_scenario(
+    *,
+    profile_id: str,
+    seed: Callable[[], Awaitable[None]],
+    expected_error: str,
+) -> None:
+    """Run one 0005-to-0006 preflight in isolation and always restore head."""
+    config = _alembic_config()
+    command.downgrade(config, "0005_style_repository_fields")
+    try:
+        asyncio.run(seed())
+        with pytest.raises(Exception, match=expected_error):
+            command.upgrade(config, "head")
+    finally:
+        try:
+            asyncio.run(_cleanup_style_fixture(profile_id))
+        finally:
+            command.upgrade(config, "head")
+
+
 def test_base_registers_every_required_table() -> None:
     db_spec = importlib.util.find_spec("bodrye_bot.db")
     assert db_spec is not None, "P0.T3 must provide the database package"
@@ -197,6 +243,215 @@ def test_migrated_tables_have_owner_and_bounded_operational_shape() -> None:
 
     assert "payload" not in columns["source_documents"]
     assert "payload" in columns["source_payload_cache"]
+
+
+def test_style_metadata_matches_idempotency_constraints() -> None:
+    importlib.import_module("bodrye_bot.db.models")
+    base_module = importlib.import_module("bodrye_bot.db.base")
+    style_rules = base_module.Base.metadata.tables["style_rules"]
+    style_edits = base_module.Base.metadata.tables["style_edit_observations"]
+
+    proposed_index = next(
+        index for index in style_rules.indexes if index.name == "uq_style_rule_proposed_pattern"
+    )
+    assert [column.name for column in proposed_index.columns] == [
+        "owner_id",
+        "profile_id",
+        "pattern_key",
+    ]
+    assert proposed_index.unique is True
+    assert str(proposed_index.dialect_options["postgresql"]["where"]) == (
+        "status = 'proposed' AND pattern_key <> ''"
+    )
+    assert any(
+        constraint.name == "uq_style_edit_observation_source"
+        for constraint in style_edits.constraints
+    )
+
+
+def test_upgrade_from_0005_accepts_legacy_empty_pattern_keys() -> None:
+    assert TEST_DATABASE_URL is not None
+    profile_id = str(uuid4())
+    rule_one = str(uuid4())
+    rule_two = str(uuid4())
+
+    async def seed() -> None:
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "INSERT INTO style_profiles "
+                        "(id, owner_id, created_at, updated_at, version, status) "
+                        "VALUES (:profile_id, 42, now(), now(), 101, 'calibrating')"
+                    ),
+                    {"profile_id": profile_id},
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO style_rules "
+                        "(id, owner_id, created_at, updated_at, profile_id, scope, "
+                        "rule_text, origin, status, risks, tags, pattern_key) "
+                        "VALUES "
+                        "(:rule_one, 42, now(), now(), :profile_id, 'global', "
+                        "'Первое.', 'edit', 'proposed', '{}', '{}', ''), "
+                        "(:rule_two, 42, now(), now(), :profile_id, 'global', "
+                        "'Второе.', 'edit', 'proposed', '{}', '{}', '')"
+                    ),
+                    {"rule_one": rule_one, "rule_two": rule_two, "profile_id": profile_id},
+                )
+        finally:
+            await engine.dispose()
+
+    config = _alembic_config()
+    command.downgrade(config, "0005_style_repository_fields")
+    try:
+        asyncio.run(seed())
+        command.upgrade(config, "head")
+        async def count_empty_keys() -> int:
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+            try:
+                async with engine.connect() as connection:
+                    result = await connection.execute(
+                        text(
+                            "SELECT count(*) FROM style_rules "
+                            "WHERE profile_id = :profile_id AND pattern_key = ''"
+                        ),
+                        {"profile_id": profile_id},
+                    )
+                    return int(result.scalar_one())
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(count_empty_keys()) == 2
+    finally:
+        try:
+            asyncio.run(_cleanup_style_fixture(profile_id))
+        finally:
+            command.upgrade(config, "head")
+
+    tables, _ = _snapshot()
+    assert "style_edit_observations" in tables
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "limit", "message"),
+    [
+        (
+            "style_rules",
+            "risks",
+            16,
+            "style migration preflight failed: style_rules.risks exceeds 16 items",
+        ),
+        (
+            "style_rules",
+            "tags",
+            32,
+            "style migration preflight failed: style_rules.tags exceeds 32 items",
+        ),
+        (
+            "style_examples",
+            "risks",
+            16,
+            "style migration preflight failed: style_examples.risks exceeds 16 items",
+        ),
+    ],
+)
+def test_0006_preflight_rejects_overbounded_style_arrays(
+    table: str, column: str, limit: int, message: str
+) -> None:
+    assert TEST_DATABASE_URL is not None
+    profile_id = str(uuid4())
+    record_id = str(uuid4())
+    values = ", ".join(f"'value-{index}'" for index in range(limit + 1))
+    array_sql = f"ARRAY[{values}]::varchar[]"
+    risks_sql = array_sql if column == "risks" else "'{}'"
+    tags_sql = array_sql if column == "tags" else "'{}'"
+
+    async def seed() -> None:
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "INSERT INTO style_profiles "
+                        "(id, owner_id, created_at, updated_at, version, status) "
+                        "VALUES (:profile_id, 42, now(), now(), 1, 'calibrating')"
+                    ),
+                    {"profile_id": profile_id},
+                )
+                if table == "style_rules":
+                    await connection.execute(
+                        text(
+                            "INSERT INTO style_rules "
+                            "(id, owner_id, created_at, updated_at, profile_id, scope, "
+                            "rule_text, origin, status, risks, tags, pattern_key) "
+                            "VALUES (:record_id, 42, now(), now(), :profile_id, "
+                            "'global', 'Правило.', 'edit', 'proposed', "
+                            f"{risks_sql}, {tags_sql}, '')"
+                        ),
+                        {"record_id": record_id, "profile_id": profile_id},
+                    )
+                else:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO style_examples "
+                            "(id, owner_id, created_at, profile_id, text, rubric, "
+                            "format, tags, rating, is_holdout, risks) "
+                            f"VALUES (:record_id, 42, now(), :profile_id, 'Пример.', "
+                            f"'energy', 'post', '{{}}', 5, false, {array_sql})"
+                        ),
+                        {"record_id": record_id, "profile_id": profile_id},
+                    )
+        finally:
+            await engine.dispose()
+
+    _run_style_migration_scenario(
+        profile_id=profile_id, seed=seed, expected_error=message
+    )
+
+
+def test_0006_preflight_rejects_duplicate_nonempty_proposed_pattern_keys() -> None:
+    assert TEST_DATABASE_URL is not None
+    profile_id = str(uuid4())
+
+    async def seed() -> None:
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "INSERT INTO style_profiles "
+                        "(id, owner_id, created_at, updated_at, version, status) "
+                        "VALUES (:profile_id, 42, now(), now(), 1, 'calibrating')"
+                    ),
+                    {"profile_id": profile_id},
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO style_rules "
+                        "(id, owner_id, created_at, updated_at, profile_id, scope, "
+                        "rule_text, origin, status, risks, tags, pattern_key) "
+                        "VALUES "
+                        "(:rule_one, 42, now(), now(), :profile_id, 'global', "
+                        "'Первое.', 'edit', 'proposed', '{}', '{}', 'opening:action'), "
+                        "(:rule_two, 42, now(), now(), :profile_id, 'global', "
+                        "'Второе.', 'edit', 'proposed', '{}', '{}', 'opening:action')"
+                    ),
+                    {
+                        "profile_id": profile_id,
+                        "rule_one": str(uuid4()),
+                        "rule_two": str(uuid4()),
+                    },
+                )
+        finally:
+            await engine.dispose()
+
+    _run_style_migration_scenario(
+        profile_id=profile_id,
+        seed=seed,
+        expected_error="style migration preflight failed: duplicate proposed nonempty pattern_key",
+    )
 
 
 def test_async_session_factory_uses_the_configured_secret_url() -> None:

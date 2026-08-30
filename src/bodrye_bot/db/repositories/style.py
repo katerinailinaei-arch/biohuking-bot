@@ -99,25 +99,49 @@ class SqlAlchemyStyleRepository:
     ) -> int:
         self._ensure_active()
         await self.ensure_profile(owner_id=owner_id, profile_id=edit.profile_id)
-        existing = await self._session.scalar(
-            select(StyleEditObservation.id).where(
-                StyleEditObservation.owner_id == owner_id,
-                StyleEditObservation.profile_id == edit.profile_id,
-                StyleEditObservation.source_edit_id == edit.source_edit_id,
-            )
-        )
+        existing = await self._existing_edit(owner_id=owner_id, edit=edit)
         if existing is not None:
+            if existing.pattern_key != edit.pattern_key:
+                raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
             return await self._edit_count(owner_id=owner_id, edit=edit)
-        self._session.add(
-            StyleEditObservation(
-                owner_id=owner_id,
-                profile_id=edit.profile_id,
-                pattern_key=edit.pattern_key,
-                source_edit_id=edit.source_edit_id,
+        try:
+            async with self._session.begin_nested():
+                self._session.add(
+                    StyleEditObservation(
+                        owner_id=owner_id,
+                        profile_id=edit.profile_id,
+                        pattern_key=edit.pattern_key,
+                        source_edit_id=edit.source_edit_id,
+                    )
+                )
+                await self._session.flush()
+        except IntegrityError:
+            # A concurrent insert can win while this savepoint is waiting on
+            # the unique key. Re-query the exact idempotency tuple after the
+            # savepoint has rolled back; never expose the driver exception.
+            existing = await self._existing_edit(
+                owner_id=owner_id, edit=edit, exact_pattern=True
             )
-        )
-        await self._session.flush()
+            if existing is not None:
+                return await self._edit_count(owner_id=owner_id, edit=edit)
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION) from None
         return await self._edit_count(owner_id=owner_id, edit=edit)
+
+    async def _existing_edit(
+        self,
+        *,
+        owner_id: int,
+        edit: EditObservation,
+        exact_pattern: bool = False,
+    ) -> StyleEditObservation | None:
+        query = select(StyleEditObservation).where(
+            StyleEditObservation.owner_id == owner_id,
+            StyleEditObservation.profile_id == edit.profile_id,
+            StyleEditObservation.source_edit_id == edit.source_edit_id,
+        )
+        if exact_pattern:
+            query = query.where(StyleEditObservation.pattern_key == edit.pattern_key)
+        return cast(StyleEditObservation | None, await self._session.scalar(query))
 
     async def _edit_count(self, *, owner_id: int, edit: EditObservation) -> int:
         count = await self._session.scalar(
@@ -178,21 +202,26 @@ class SqlAlchemyStyleRepository:
 
     async def add_example(self, example: StyleExample) -> None:
         self._ensure_active()
-        self._session.add(
-            StyleExampleModel(
-                id=example.id,
-                owner_id=example.owner_id,
-                profile_id=example.profile_id,
-                text=example.text,
-                rubric=example.rubric,
-                format=example.format,
-                tags=list(example.tags),
-                risks=list(example.risks),
-                rating=example.rating,
-                is_holdout=False,
-            )
-        )
-        await self._session.flush()
+        await self.ensure_profile(owner_id=example.owner_id, profile_id=example.profile_id)
+        try:
+            async with self._session.begin_nested():
+                self._session.add(
+                    StyleExampleModel(
+                        id=example.id,
+                        owner_id=example.owner_id,
+                        profile_id=example.profile_id,
+                        text=example.text,
+                        rubric=example.rubric,
+                        format=example.format,
+                        tags=list(example.tags),
+                        risks=list(example.risks),
+                        rating=example.rating,
+                        is_holdout=False,
+                    )
+                )
+                await self._session.flush()
+        except IntegrityError:
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION) from None
 
     async def get(self, *, owner_id: int, rule_id: UUID) -> StyleRule:
         self._ensure_active()

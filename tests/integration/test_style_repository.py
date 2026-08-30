@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -120,6 +121,181 @@ async def test_style_repository_deduplicates_source_edit_and_proposed_rule(
             rule = _rule(profile_id=profile_id, pattern_key="opening:action")
             assert (await repository.add(rule)).id == rule.id
             assert (await repository.add(replace(rule, id=uuid4()))).id == rule.id
+
+
+@pytest.mark.asyncio
+async def test_style_repository_deduplicates_concurrent_source_edit(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    profile_id = uuid4()
+    edit = EditObservation(
+        profile_id=profile_id,
+        source_edit_id=uuid4(),
+        rule_text="Правило.",
+        pattern_key="opening:action",
+        confirmed=True,
+    )
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                StyleProfileModel(
+                    id=profile_id,
+                    owner_id=42,
+                    version=profile_id.int % 2_000_000_000 + 1,
+                    status="calibrating",
+                )
+            )
+
+    async def record() -> int:
+        async with session_factory() as session:
+            async with session.begin():
+                repository = SqlAlchemyStyleRepository(
+                    session,
+                    SqlAlchemyAuditWriter(session, ensure_active=lambda: None),
+                    ensure_active=lambda: None,
+                )
+                return await repository.record_confirmed_edit(owner_id=42, edit=edit)
+
+    assert await asyncio.gather(record(), record()) == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_style_repository_maps_concurrent_source_edit_pattern_conflict(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    profile_id = uuid4()
+    source_edit_id = uuid4()
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                StyleProfileModel(
+                    id=profile_id,
+                    owner_id=42,
+                    version=profile_id.int % 2_000_000_000 + 1,
+                    status="calibrating",
+                )
+            )
+
+    async def record(pattern_key: str) -> int:
+        async with session_factory() as session:
+            async with session.begin():
+                repository = SqlAlchemyStyleRepository(
+                    session,
+                    SqlAlchemyAuditWriter(session, ensure_active=lambda: None),
+                    ensure_active=lambda: None,
+                )
+                return await repository.record_confirmed_edit(
+                    owner_id=42,
+                    edit=EditObservation(
+                        profile_id=profile_id,
+                        source_edit_id=source_edit_id,
+                        rule_text="Правило.",
+                        pattern_key=pattern_key,
+                        confirmed=True,
+                    ),
+                )
+
+    results = await asyncio.gather(
+        record("opening:first"), record("opening:second"), return_exceptions=True
+    )
+
+    assert sum(isinstance(result, int) for result in results) == 1
+    errors = [result for result in results if isinstance(result, BaseException)]
+    assert len(errors) == 1
+    assert isinstance(errors[0], SafeError)
+    assert errors[0].code is SafeErrorCode.INVALID_TRANSITION
+
+
+@pytest.mark.asyncio
+async def test_style_repository_rejects_foreign_profile_example_before_insert(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    foreign_profile_id = uuid4()
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                session.add(
+                    StyleProfileModel(
+                        id=foreign_profile_id,
+                        owner_id=999,
+                        version=foreign_profile_id.int % 2_000_000_000 + 1,
+                        status="calibrating",
+                    )
+                )
+                repository = SqlAlchemyStyleRepository(
+                    session,
+                    SqlAlchemyAuditWriter(session, ensure_active=lambda: None),
+                    ensure_active=lambda: None,
+                )
+                with pytest.raises(SafeError) as caught:
+                    await repository.add_example(
+                        StyleExample(
+                            id=uuid4(),
+                            owner_id=42,
+                            profile_id=foreign_profile_id,
+                            text="Чужой пример.",
+                            rubric="energy",
+                            format="post",
+                            tags=(),
+                            risks=(),
+                            rating=5,
+                        )
+                    )
+        assert caught.value.code is SafeErrorCode.OWNER_FORBIDDEN
+    finally:
+        async with session_factory() as session:
+            async with session.begin():
+                stored = await session.get(StyleProfileModel, foreign_profile_id)
+                if stored is not None:
+                    await session.delete(stored)
+
+
+@pytest.mark.asyncio
+async def test_style_repository_maps_concurrent_duplicate_example_integrity_error(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    profile_id = uuid4()
+    example_id = uuid4()
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                StyleProfileModel(
+                    id=profile_id,
+                    owner_id=42,
+                    version=profile_id.int % 2_000_000_000 + 1,
+                    status="active",
+                )
+            )
+
+    example = StyleExample(
+        id=example_id,
+        owner_id=42,
+        profile_id=profile_id,
+        text="Пример.",
+        rubric="energy",
+        format="post",
+        tags=(),
+        risks=(),
+        rating=5,
+    )
+
+    async def add_example() -> None:
+        async with session_factory() as session:
+            async with session.begin():
+                repository = SqlAlchemyStyleRepository(
+                    session,
+                    SqlAlchemyAuditWriter(session, ensure_active=lambda: None),
+                    ensure_active=lambda: None,
+                )
+                await repository.add_example(example)
+
+    results = await asyncio.gather(add_example(), add_example(), return_exceptions=True)
+
+    assert sum(result is None for result in results) == 1
+    errors = [result for result in results if isinstance(result, BaseException)]
+    assert len(errors) == 1
+    assert isinstance(errors[0], SafeError)
+    assert errors[0].code is SafeErrorCode.INVALID_TRANSITION
 
 
 @pytest.mark.asyncio
