@@ -11,6 +11,8 @@ from bodrye_bot.identity.service import OwnerGuard
 
 
 class StyleRuleRepository(Protocol):
+    async def ensure_profile(self, *, owner_id: int, profile_id: UUID) -> None: ...
+
     async def record_confirmed_edit(
         self, *, owner_id: int, edit: EditObservation
     ) -> int: ...
@@ -19,13 +21,13 @@ class StyleRuleRepository(Protocol):
         self, *, owner_id: int, profile_id: UUID, pattern_key: str
     ) -> StyleRule | None: ...
 
-    async def add(self, rule: StyleRule) -> None: ...
+    async def add(self, rule: StyleRule) -> StyleRule: ...
 
     async def get(self, *, owner_id: int, rule_id: UUID) -> StyleRule: ...
 
     async def active_rules(
         self, *, owner_id: int, profile_id: UUID
-    ) -> list[StyleRule]: ...
+    ) -> tuple[StyleRule, ...]: ...
 
     async def reject(self, *, owner_id: int, proposal: StyleRule) -> StyleRule: ...
 
@@ -57,6 +59,7 @@ class StyleLearningService:
         self, *, owner_id: int, edit: EditObservation
     ) -> StyleRule | None:
         self._owner_guard.authorize(owner_id)
+        await self._repository.ensure_profile(owner_id=owner_id, profile_id=edit.profile_id)
         confirmed_count = 0
         if edit.confirmed:
             confirmed_count = await self._repository.record_confirmed_edit(
@@ -91,12 +94,11 @@ class StyleLearningService:
             risks=edit.risks,
             tags=edit.tags,
         )
-        await self._repository.add(proposal)
-        return proposal
+        return await self._repository.add(proposal)
 
     async def active_rules(
         self, *, owner_id: int, profile_id: UUID
-    ) -> list[StyleRule]:
+    ) -> tuple[StyleRule, ...]:
         self._owner_guard.authorize(owner_id)
         rules = await self._repository.active_rules(
             owner_id=owner_id, profile_id=profile_id

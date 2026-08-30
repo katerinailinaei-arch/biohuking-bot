@@ -516,6 +516,8 @@ class StyleRule(OwnedRecord, MutableRecord, Base):
     __tablename__ = "style_rules"
     __table_args__ = (
         UniqueConstraint("id", "owner_id", name="uq_style_rule_id_owner"),
+        CheckConstraint("cardinality(risks) <= 16", name="style_rule_risks_bounded"),
+        CheckConstraint("cardinality(tags) <= 32", name="style_rule_tags_bounded"),
         ForeignKeyConstraint(
             ["profile_id", "owner_id"],
             ["style_profiles.id", "style_profiles.owner_id"],
@@ -562,6 +564,7 @@ class StyleExample(OwnedRecord, Base):
         ),
         CheckConstraint("rating IS NULL OR rating BETWEEN 1 AND 5", name="style_rating_range"),
         CheckConstraint("cardinality(tags) <= 32", name="style_tags_bounded"),
+        CheckConstraint("cardinality(risks) <= 16", name="style_example_risks_bounded"),
     )
 
     profile_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
@@ -591,10 +594,15 @@ class StyleEditObservation(OwnedRecord, Base):
             "pattern_key ~ '^[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,63}$'",
             name="style_edit_pattern_key_canonical",
         ),
+        UniqueConstraint(
+            "owner_id", "profile_id", "source_edit_id",
+            name="uq_style_edit_observation_source",
+        ),
     )
 
     profile_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     pattern_key: Mapped[str] = mapped_column(String(96), nullable=False)
+    source_edit_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
 
 
 class CostEvent(OwnedRecord, Base):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -10,6 +11,7 @@ from bodrye_bot.db.models import StyleProfile as StyleProfileModel
 from bodrye_bot.db.repositories.style import SqlAlchemyStyleRepository
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.style import (
+    EditObservation,
     RuleScope,
     RuleStatus,
     StyleExample,
@@ -18,7 +20,12 @@ from bodrye_bot.domain.style import (
 from bodrye_bot.operations.audit import SqlAlchemyAuditWriter
 
 
-def _rule(*, profile_id: UUID, status: RuleStatus = RuleStatus.PROPOSED) -> StyleRule:
+def _rule(
+    *,
+    profile_id: UUID,
+    status: RuleStatus = RuleStatus.PROPOSED,
+    pattern_key: str = "opening:concrete-action",
+) -> StyleRule:
     return StyleRule(
         id=uuid4(),
         owner_id=42,
@@ -27,7 +34,7 @@ def _rule(*, profile_id: UUID, status: RuleStatus = RuleStatus.PROPOSED) -> Styl
         format="post",
         text="Начинать с конкретного действия.",
         origin="edit",
-        pattern_key="opening:concrete-action",
+        pattern_key=pattern_key,
         status=status,
         risks=("medium",),
         tags=("sleep",),
@@ -82,6 +89,40 @@ async def test_style_repository_round_trips_all_context_and_learning_fields(
 
 
 @pytest.mark.asyncio
+async def test_style_repository_deduplicates_source_edit_and_proposed_rule(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    profile_id = uuid4()
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                StyleProfileModel(
+                    id=profile_id,
+                    owner_id=42,
+                    version=profile_id.int % 2_000_000_000 + 1,
+                    status="calibrating",
+                )
+            )
+            repository = SqlAlchemyStyleRepository(
+                session,
+                SqlAlchemyAuditWriter(session, ensure_active=lambda: None),
+                ensure_active=lambda: None,
+            )
+            edit = EditObservation(
+                profile_id=profile_id,
+                source_edit_id=uuid4(),
+                rule_text="Правило.",
+                pattern_key="opening:action",
+                confirmed=True,
+            )
+            assert await repository.record_confirmed_edit(owner_id=42, edit=edit) == 1
+            assert await repository.record_confirmed_edit(owner_id=42, edit=edit) == 1
+            rule = _rule(profile_id=profile_id, pattern_key="opening:action")
+            assert (await repository.add(rule)).id == rule.id
+            assert (await repository.add(replace(rule, id=uuid4()))).id == rule.id
+
+
+@pytest.mark.asyncio
 async def test_style_repository_is_owner_scoped_and_atomic_for_confirmation_and_rejection(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -100,7 +141,11 @@ async def test_style_repository_is_owner_scoped_and_atomic_for_confirmation_and_
             audit = SqlAlchemyAuditWriter(session, ensure_active=lambda: None)
             repository = SqlAlchemyStyleRepository(session, audit, ensure_active=lambda: None)
             proposal = _rule(profile_id=profile_id)
-            conflict = _rule(profile_id=profile_id, status=RuleStatus.ACTIVE)
+            conflict = _rule(
+                profile_id=profile_id,
+                status=RuleStatus.ACTIVE,
+                pattern_key="opening:previous-action",
+            )
             await repository.add(proposal)
             await repository.add(conflict)
             with pytest.raises(SafeError) as caught:

@@ -26,6 +26,9 @@ class InMemoryStyleRuleRepository:
         self.confirmed_pattern_counts[key] = self.confirmed_pattern_counts.get(key, 0) + 1
         return self.confirmed_pattern_counts[key]
 
+    async def ensure_profile(self, *, owner_id: int, profile_id: UUID) -> None:
+        return None
+
     async def find_proposed_rule(
         self, *, owner_id: int, profile_id: UUID, pattern_key: str
     ) -> StyleRule | None:
@@ -42,9 +45,10 @@ class InMemoryStyleRuleRepository:
             None,
         )
 
-    async def add(self, rule: StyleRule) -> None:
+    async def add(self, rule: StyleRule) -> StyleRule:
         self.calls.append(("add", rule.owner_id))
         self.rules[rule.id] = rule
+        return rule
 
     async def get(self, *, owner_id: int, rule_id: UUID) -> StyleRule:
         self.calls.append(("get", owner_id))
@@ -57,15 +61,15 @@ class InMemoryStyleRuleRepository:
         self.calls.append(("save", rule.owner_id))
         self.rules[rule.id] = rule
 
-    async def active_rules(self, *, owner_id: int, profile_id: UUID) -> list[StyleRule]:
+    async def active_rules(self, *, owner_id: int, profile_id: UUID) -> tuple[StyleRule, ...]:
         self.calls.append(("active_rules", owner_id))
-        return [
+        return tuple(
             rule
             for rule in self.rules.values()
             if rule.owner_id == owner_id
             and rule.profile_id == profile_id
             and rule.status is RuleStatus.ACTIVE
-        ]
+        )
 
     async def record_audit(self, *, action: str, rule_id: UUID) -> None:
         self.audit.append((action, rule_id))
@@ -107,6 +111,7 @@ PROFILE_ID = uuid4()
 def _edit(*, explicit_remember: bool = False) -> EditObservation:
     return EditObservation(
         profile_id=PROFILE_ID,
+        source_edit_id=uuid4(),
         rule_text="Начинать с конкретного действия.",
         pattern_key="opening:concrete-action",
         confirmed=True,
@@ -123,7 +128,7 @@ async def test_edit_never_activates_rule_without_owner_confirmation() -> None:
 
     assert proposal is not None
     assert proposal.status is RuleStatus.PROPOSED
-    assert await service.active_rules(owner_id=42, profile_id=PROFILE_ID) == []
+    assert await service.active_rules(owner_id=42, profile_id=PROFILE_ID) == ()
 
 
 @pytest.mark.asyncio
@@ -302,6 +307,7 @@ async def test_pattern_key_is_normalized_before_counting_repeated_confirmed_edit
     edits = tuple(
         EditObservation(
             profile_id=PROFILE_ID,
+            source_edit_id=uuid4(),
             rule_text="Начинать с действия.",
             pattern_key=key,
             confirmed=True,
@@ -324,13 +330,17 @@ async def test_pattern_key_is_normalized_before_counting_repeated_confirmed_edit
 
 
 def test_pattern_key_rejects_empty_or_untyped_values() -> None:
-    with pytest.raises(ValueError, match="pattern key"):
+    with pytest.raises(SafeError) as caught:
         EditObservation(
             profile_id=PROFILE_ID,
+            source_edit_id=uuid4(),
             rule_text="Правило.",
             pattern_key="not-a-typed-key",
             confirmed=True,
         )
+    assert caught.value.code is SafeErrorCode.INVALID_TRANSITION
+    assert caught.value.trace_id
+    assert "Это действие сейчас недоступно" in caught.value.user_message
 
 
 @pytest.mark.asyncio

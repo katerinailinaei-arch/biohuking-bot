@@ -7,6 +7,8 @@ from enum import StrEnum
 from statistics import median
 from uuid import UUID
 
+from bodrye_bot.domain.errors import SafeError, SafeErrorCode
+
 
 class RuleScope(StrEnum):
     HARD = "hard"
@@ -34,13 +36,13 @@ def normalize_pattern_key(value: str) -> str:
     """Normalize the explicit category:slug key used for edit similarity."""
     parts = value.strip().lower().split(":")
     if len(parts) != 2:
-        raise ValueError("Invalid pattern key")
+        raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
     category, slug = (
         re.sub(r"-+", "-", re.sub(r"[_\s]+", "-", part)).strip("-")
         for part in parts
     )
     if not _PATTERN_PART.fullmatch(category) or not _PATTERN_SLUG.fullmatch(slug):
-        raise ValueError("Invalid pattern key")
+        raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
     return f"{category}:{slug}"
 
 
@@ -144,11 +146,11 @@ class HoldoutResult:
 
     def __post_init__(self) -> None:
         if type(self.rating) is not int or type(self.hard_rule_violations) is not int:
-            raise ValueError("Holdout values must be exact integers")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
         if not 1 <= self.rating <= 5:
-            raise ValueError("Holdout rating must be between 1 and 5")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
         if self.hard_rule_violations < 0:
-            raise ValueError("Hard rule violations cannot be negative")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
 
 
 @dataclass(frozen=True)
@@ -187,6 +189,7 @@ class StyleGate:
 @dataclass(frozen=True)
 class EditObservation:
     profile_id: UUID
+    source_edit_id: UUID
     rule_text: str
     pattern_key: str
     confirmed: bool
@@ -200,4 +203,4 @@ class EditObservation:
         object.__setattr__(self, "pattern_key", normalize_pattern_key(self.pattern_key))
         object.__setattr__(self, "scope", RuleScope(self.scope))
         if self.scope is RuleScope.FORMAT and not self.format:
-            raise ValueError("Format rules require a format")
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)

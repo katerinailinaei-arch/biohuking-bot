@@ -157,7 +157,7 @@ def test_style_gate_requires_zero_hard_violations_two_holdouts_and_median_four()
 def test_holdout_result_rejects_values_outside_the_gate_domain(
     rating: int, violations: int
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SafeError):
         HoldoutResult(
             "invalid",
             rating=rating,
@@ -170,7 +170,7 @@ def test_holdout_result_rejects_values_outside_the_gate_domain(
 def test_holdout_result_rejects_bool_and_float_numeric_values(
     rating: object, violations: object
 ) -> None:
-    with pytest.raises(ValueError, match="exact integers"):
+    with pytest.raises(SafeError):
         HoldoutResult(  # type: ignore[arg-type]
             "invalid",
             rating=rating,

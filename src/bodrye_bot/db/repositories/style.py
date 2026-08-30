@@ -6,6 +6,7 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bodrye_bot.db.models import StyleEditObservation
@@ -97,14 +98,28 @@ class SqlAlchemyStyleRepository:
         self, *, owner_id: int, edit: EditObservation
     ) -> int:
         self._ensure_active()
+        await self.ensure_profile(owner_id=owner_id, profile_id=edit.profile_id)
+        existing = await self._session.scalar(
+            select(StyleEditObservation.id).where(
+                StyleEditObservation.owner_id == owner_id,
+                StyleEditObservation.profile_id == edit.profile_id,
+                StyleEditObservation.source_edit_id == edit.source_edit_id,
+            )
+        )
+        if existing is not None:
+            return await self._edit_count(owner_id=owner_id, edit=edit)
         self._session.add(
             StyleEditObservation(
                 owner_id=owner_id,
                 profile_id=edit.profile_id,
                 pattern_key=edit.pattern_key,
+                source_edit_id=edit.source_edit_id,
             )
         )
         await self._session.flush()
+        return await self._edit_count(owner_id=owner_id, edit=edit)
+
+    async def _edit_count(self, *, owner_id: int, edit: EditObservation) -> int:
         count = await self._session.scalar(
             select(func.count()).select_from(StyleEditObservation).where(
                 StyleEditObservation.owner_id == owner_id,
@@ -113,6 +128,16 @@ class SqlAlchemyStyleRepository:
             )
         )
         return cast(int, count)
+
+    async def ensure_profile(self, *, owner_id: int, profile_id: UUID) -> None:
+        self._ensure_active()
+        exists = await self._session.scalar(
+            select(StyleProfileModel.id).where(
+                StyleProfileModel.id == profile_id, StyleProfileModel.owner_id == owner_id
+            )
+        )
+        if exists is None:
+            raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
 
     async def find_proposed_rule(
         self, *, owner_id: int, profile_id: UUID, pattern_key: str
@@ -128,10 +153,28 @@ class SqlAlchemyStyleRepository:
         )
         return _to_rule(model) if model is not None else None
 
-    async def add(self, rule: StyleRule) -> None:
+    async def add(self, rule: StyleRule) -> StyleRule:
         self._ensure_active()
-        self._session.add(_from_rule(rule))
-        await self._session.flush()
+        await self.ensure_profile(owner_id=rule.owner_id, profile_id=rule.profile_id)
+        existing = await self.find_proposed_rule(
+            owner_id=rule.owner_id, profile_id=rule.profile_id, pattern_key=rule.pattern_key
+        )
+        if existing is not None:
+            return existing
+        try:
+            async with self._session.begin_nested():
+                self._session.add(_from_rule(rule))
+                await self._session.flush()
+        except IntegrityError:
+            existing = await self.find_proposed_rule(
+                owner_id=rule.owner_id,
+                profile_id=rule.profile_id,
+                pattern_key=rule.pattern_key,
+            )
+            if existing is None:
+                raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION) from None
+            return existing
+        return rule
 
     async def add_example(self, example: StyleExample) -> None:
         self._ensure_active()
@@ -272,6 +315,12 @@ def _require_same_rule(stored: StyleRuleModel, expected: StyleRule) -> None:
         or actual.scope is not expected.scope
         or actual.pattern_key != expected.pattern_key
         or actual.status is not expected.status
+        or actual.text != expected.text
+        or actual.origin != expected.origin
+        or actual.format != expected.format
+        or actual.risks != expected.risks
+        or actual.tags != expected.tags
+        or actual.confirmed_at != expected.confirmed_at
     ):
         raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
 
