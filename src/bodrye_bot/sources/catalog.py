@@ -4,8 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Protocol, Self
 
 from bodrye_bot.domain.sources import SourceRole
+from bodrye_bot.domain.workflow import Actor
+from bodrye_bot.operations.audit import AuditEntry, AuditEventType, AuditObjectType
+from bodrye_bot.ports.repositories import AuditWriter
 
 
 class SourceKind(StrEnum):
@@ -41,6 +46,7 @@ class SourceDefinition:
     config: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "config", MappingProxyType(dict(self.config)))
         if not self.roles:
             raise ValueError("Source needs at least one role")
         if self.kind is SourceKind.TELEGRAM_MANUAL:
@@ -166,6 +172,81 @@ class SourceCatalog:
         )
 
 
+class SourceCatalogRepository(Protocol):
+    async def save(self, owner_id: int, catalog: SourceCatalog) -> None: ...
+
+
+class SourceCatalogUnitOfWork(Protocol):
+    catalogs: SourceCatalogRepository
+    audit: AuditWriter
+
+    async def __aenter__(self) -> Self: ...
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None: ...
+
+    async def commit(self) -> None: ...
+
+
+class SourceCatalogUpdater:
+    def __init__(self, *, uow: SourceCatalogUnitOfWork) -> None:
+        self._uow = uow
+
+    async def update_pubmed_queries(
+        self,
+        *,
+        owner_id: int,
+        current: SourceCatalog,
+        version: str,
+        queries: tuple[str, str, str],
+    ) -> SourceCatalog:
+        if not version or version == current.version or any(not query for query in queries):
+            raise ValueError("A distinct non-empty registry version and three queries are required")
+        query_version = version.replace("source-registry", "pubmed-rss")
+        iterator = iter(queries)
+        sources = tuple(
+            replace_source_query(source, next(iterator), query_version)
+            if source.kind is SourceKind.PUBMED_RSS
+            else source
+            for source in current.sources
+        )
+        updated = SourceCatalog(version=version, sources=sources)
+        async with self._uow as uow:
+            await uow.catalogs.save(owner_id, updated)
+            await uow.audit.record(
+                AuditEntry(
+                    owner_id=owner_id,
+                    event_type=AuditEventType.CONFIGURATION_CHANGED,
+                    actor=Actor.OWNER,
+                    object_type=AuditObjectType.CONFIGURATION,
+                    metadata={
+                        "registry_version": version,
+                        "pubmed_query_version": query_version,
+                        "source_count": len(updated.sources),
+                    },
+                )
+            )
+            await uow.commit()
+        return updated
+
+
+def replace_source_query(
+    source: SourceDefinition, query: str, query_version: str
+) -> SourceDefinition:
+    return SourceDefinition(
+        name=source.name,
+        canonical_url=source.canonical_url,
+        kind=source.kind,
+        roles=source.roles,
+        access_method=source.access_method,
+        status=source.status,
+        version=query_version,
+        license_note=source.license_note,
+        checked_at=source.checked_at,
+        allowed_hosts=source.allowed_hosts,
+        config={"query_version": query_version, "query": query},
+    )
+
+
 def _web(
     name: str,
     canonical_url: str,
@@ -207,4 +288,11 @@ def _pubmed(name: str, query: str, checked_at: datetime, license_note: str) -> S
     )
 
 
-__all__ = ["AccessMethod", "SourceCatalog", "SourceDefinition", "SourceKind", "SourceStatus"]
+__all__ = [
+    "AccessMethod",
+    "SourceCatalog",
+    "SourceCatalogUpdater",
+    "SourceDefinition",
+    "SourceKind",
+    "SourceStatus",
+]

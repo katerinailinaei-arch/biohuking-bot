@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 
 from bodrye_bot.domain.sources import SourceRole
-from bodrye_bot.sources.catalog import AccessMethod, SourceCatalog, SourceKind
+from bodrye_bot.sources.catalog import (
+    AccessMethod,
+    SourceCatalog,
+    SourceCatalogUpdater,
+    SourceKind,
+)
 
 
 def test_catalog_seeds_versioned_approved_sources_with_pubmed_queries():
@@ -43,3 +48,108 @@ def test_catalog_rejects_evidence_role_for_manual_telegram_source():
 
     assert telegram.access_method is AccessMethod.OWNER_FORWARDED_OR_EXPLICIT_LINK
     assert SourceRole.EVIDENCE not in telegram.roles
+
+
+def test_catalog_config_is_deeply_immutable():
+    """Break caught: an onboarding caller mutates a published query without audit."""
+    pubmed = next(
+        source for source in SourceCatalog.initial().sources if source.kind is SourceKind.PUBMED_RSS
+    )
+
+    with pytest.raises(TypeError):
+        pubmed.config["query"] = "different"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_owner_update_persists_new_catalog_version_and_redacted_audit_atomically():
+    """Break caught: an editable PubMed configuration is saved without a versioned audit record."""
+    from bodrye_bot.operations.audit import AuditEntry
+
+    class FakeRepository:
+        saved: list[tuple[int, SourceCatalog]] = []
+
+        async def save(self, owner_id: int, catalog: SourceCatalog) -> None:
+            self.saved.append((owner_id, catalog))
+
+    class FakeAudit:
+        recorded: list[AuditEntry] = []
+
+        async def record(self, event: AuditEntry) -> None:
+            self.recorded.append(event)
+
+    class FakeUow:
+        def __init__(self) -> None:
+            self.catalogs = FakeRepository()
+            self.audit = FakeAudit()
+            self.committed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            if exc is not None:
+                self.catalogs.saved.clear()
+                self.audit.recorded.clear()
+
+        async def commit(self) -> None:
+            self.committed = True
+
+    uow = FakeUow()
+    changed = await SourceCatalogUpdater(uow=uow).update_pubmed_queries(
+        owner_id=42,
+        current=SourceCatalog.initial(),
+        version="source-registry-v2",
+        queries=("activity", "sleep", "metabolism"),
+    )
+
+    assert changed.version == "source-registry-v2"
+    assert uow.committed is True
+    assert uow.catalogs.saved == [(42, changed)]
+    assert uow.audit.recorded[0].metadata == {
+        "registry_version": "source-registry-v2",
+        "pubmed_query_version": "pubmed-rss-v2",
+        "source_count": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_owner_update_rolls_back_save_if_audit_fails():
+    """Break caught: a changed registry survives when its mandatory audit append fails."""
+    class FailingAudit:
+        async def record(self, event) -> None:
+            raise RuntimeError("audit unavailable")
+
+    class Repository:
+        saved = False
+
+        async def save(self, owner_id, catalog) -> None:
+            self.saved = True
+
+    class Uow:
+        def __init__(self) -> None:
+            self.catalogs = Repository()
+            self.audit = FailingAudit()
+            self.rolled_back = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            self.rolled_back = exc is not None
+            if exc is not None:
+                self.catalogs.saved = False
+
+        async def commit(self) -> None:
+            raise AssertionError("commit must not run")
+
+    uow = Uow()
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await SourceCatalogUpdater(uow=uow).update_pubmed_queries(
+            owner_id=42,
+            current=SourceCatalog.initial(),
+            version="source-registry-v2",
+            queries=("activity", "sleep", "metabolism"),
+        )
+
+    assert uow.rolled_back is True
+    assert uow.catalogs.saved is False

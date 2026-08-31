@@ -50,3 +50,35 @@ The full suite was run from a hidden local process solely because the interactiv
 ## Commit
 
 Commit message: `feat: ingest only allowlisted bounded sources`. The final commit object contains this report.
+
+## Fix round 1/5 — reviewer findings
+
+### Fresh RED evidence
+
+1. Added all reviewer-specified covering tests before changing implementation. The first focused run collected 3 tests and stopped at two expected missing interface imports: `SourceCatalogUpdater` and `BodyChunk`.
+2. After the first streaming-boundary implementation, the focused run exposed 14 behavior failures: legacy resolver fakes lacked the new deadline argument; byte-buffer fixtures no longer conformed to the body protocol; the original delimiter assertions expected insecure plain framing. These were converted into compliant stream/deadline/encoding test doubles rather than restoring the unsafe API.
+
+### Fixes
+
+- `SafeFetcher` now reads through the `ResponseBody.read_chunk(maximum_bytes)` protocol, requesting at most 65,536 bytes per operation and rejecting as soon as byte 10 MiB + 1 is observed. `HttpResponse.body`, `TransportRequest.url`, `BodyChunk.data`, and URL-bearing `FetchResult` fields are repr-redacted.
+- One monotonic deadline spans DNS resolution, every request, every redirect, and streamed reads. The resolver and transport receive remaining budget; connect timeout remains 5 seconds. The deterministic test exhausts DNS plus redirect budget at 22 seconds.
+- Every DNS answer must pass explicit checks for global, non-private, non-loopback, non-link-local, non-multicast, non-reserved, and non-unspecified destination status. The tests cover mixed public/private answers, IPv4/IPv6 multicast, and a reserved destination.
+- Three redirects remain the maximum; a fourth redirect returns typed unavailable without following it.
+- Sanitization preserves the full sanitized document for SHA-256 while deriving the 65,536-character excerpt separately. Two responses with identical excerpts but different suffixes now prove distinct hashes.
+- Source LLM framing now base64-encodes the source payload inside fixed `SOURCE_DATA_BASE64_*` markers. A source supplied `SOURCE_DATA_END` cannot terminate the region or inject plain instructions.
+- `SourceDefinition.config` is a copied `MappingProxyType`; PubMed updates require a distinct registry version and exactly three non-empty queries. `SourceCatalogUpdater` consumes owner-scoped catalog repository/audit UoW protocols, persists the immutable updated version, writes only version/count metadata with the existing configuration audit event/object, and commits only after both writes. The failure test demonstrates rollback when audit append fails.
+
+### GREEN verification
+
+| Command | Result |
+|---|---|
+| `python -m pytest tests/unit/sources tests/security/test_ssrf.py tests/security/test_prompt_injection.py -v` | 27 passed in 2.57s |
+| `python -m pytest tests/unit/domain/test_errors.py tests/unit/providers/test_safe_errors.py tests/contract/test_llm_contract.py tests/architecture/test_scope.py -q` | 44 passed in 1.55s |
+| `python -m ruff check .` | All checks passed |
+| `python -m mypy src evals` | Success: no issues found in 58 source files |
+| `git diff --check` | passed |
+| `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest -q` | 303 passed in 34.39s |
+
+### Self-review
+
+The report remains evidence only; no application module imports or reads `.superpowers`. The transport boundary now makes pinning and bounded streaming explicit, while a future concrete transport must honour `pinned_ip`, original authority/TLS host, and passed remaining deadline. No migration, Plan.md, specification, implementation plan, digest behavior, live network access, or automatic publication was changed.

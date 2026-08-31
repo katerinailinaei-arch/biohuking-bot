@@ -22,8 +22,8 @@ class FetchStatus(StrEnum):
 
 @dataclass(frozen=True)
 class FetchResult:
-    source_document_id: str
-    final_url: str
+    source_document_id: str = field(repr=False)
+    final_url: str = field(repr=False)
     status: FetchStatus
     fetched_at: datetime
     http_status: int | None
@@ -32,6 +32,7 @@ class FetchResult:
     raw_content: bytes | None = field(default=None, repr=False)
     raw_expires_at: datetime | None = None
     error_code: SafeErrorCode | None = None
+    sanitized_content: str | None = field(default=None, repr=False)
 
     @classmethod
     def available(
@@ -54,6 +55,7 @@ class FetchResult:
             bounded_excerpt=content[:65_536],
             raw_content=raw_content if raw_content is not None else content.encode("utf-8"),
             raw_expires_at=fetched_at + timedelta(hours=24),
+            sanitized_content=content,
         )
 
     @classmethod
