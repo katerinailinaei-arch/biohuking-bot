@@ -4,6 +4,7 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bodrye_bot.db.repositories.sources import SqlAlchemySourceCatalogRepository
 from bodrye_bot.db.repositories.workflows import SqlAlchemyWorkflowRepository
 from bodrye_bot.operations.audit import SqlAlchemyAuditWriter
 from bodrye_bot.ports.repositories import ConcurrentUpdate
@@ -17,6 +18,7 @@ class SqlAlchemyUnitOfWork:
         self._session: AsyncSession | None = None
         self._workflows: SqlAlchemyWorkflowRepository | None = None
         self._audit: SqlAlchemyAuditWriter | None = None
+        self._catalogs: SqlAlchemySourceCatalogRepository | None = None
         self._active = False
         self._finished = False
 
@@ -38,6 +40,12 @@ class SqlAlchemyUnitOfWork:
         assert self._audit is not None
         return self._audit
 
+    @property
+    def catalogs(self) -> SqlAlchemySourceCatalogRepository:
+        self._ensure_transaction_open()
+        assert self._catalogs is not None
+        return self._catalogs
+
     async def __aenter__(self) -> SqlAlchemyUnitOfWork:
         if self._active:
             raise RuntimeError("UnitOfWork is already active")
@@ -56,6 +64,10 @@ class SqlAlchemyUnitOfWork:
         self._workflows = SqlAlchemyWorkflowRepository(
             session,
             self._audit,
+            ensure_active=self._ensure_transaction_open,
+        )
+        self._catalogs = SqlAlchemySourceCatalogRepository(
+            session,
             ensure_active=self._ensure_transaction_open,
         )
         return self
@@ -80,6 +92,7 @@ class SqlAlchemyUnitOfWork:
                 self._session = None
                 self._workflows = None
                 self._audit = None
+                self._catalogs = None
 
     async def commit(self) -> None:
         self._ensure_transaction_open()

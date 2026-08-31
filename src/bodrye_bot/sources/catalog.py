@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol, Self
+from urllib.parse import quote_plus
 
+from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.domain.sources import SourceRole
 from bodrye_bot.domain.workflow import Actor
 from bodrye_bot.operations.audit import AuditEntry, AuditEventType, AuditObjectType
@@ -199,8 +201,14 @@ class SourceCatalogUpdater:
         version: str,
         queries: tuple[str, str, str],
     ) -> SourceCatalog:
-        if not version or version == current.version or any(not query for query in queries):
-            raise ValueError("A distinct non-empty registry version and three queries are required")
+        if (
+            not version
+            or version == current.version
+            or not isinstance(queries, tuple)
+            or len(queries) != 3
+            or any(not isinstance(query, str) or not query.strip() for query in queries)
+        ):
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
         query_version = version.replace("source-registry", "pubmed-rss")
         iterator = iter(queries)
         sources = tuple(
@@ -275,7 +283,7 @@ def _web(
 def _pubmed(name: str, query: str, checked_at: datetime, license_note: str) -> SourceDefinition:
     return SourceDefinition(
         f"PubMed RSS: {name}",
-        "https://pubmed.ncbi.nlm.nih.gov/rss/",
+        f"https://pubmed.ncbi.nlm.nih.gov/rss/?term={quote_plus(query)}",
         SourceKind.PUBMED_RSS,
         (SourceRole.TOPIC,),
         AccessMethod.RSS,

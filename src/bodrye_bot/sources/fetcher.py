@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
-from collections.abc import Callable, Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Protocol
+from typing import Protocol, TypeVar
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import bleach  # type: ignore[import-untyped]
@@ -19,6 +21,7 @@ READ_CHUNK_BYTES = 65_536
 MAX_REDIRECTS = 3
 CONNECT_TIMEOUT_SECONDS = 5
 TOTAL_TIMEOUT_SECONDS = 20
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -34,7 +37,7 @@ class ResponseBody(Protocol):
 @dataclass(frozen=True)
 class HttpResponse:
     status_code: int
-    headers: Mapping[str, str]
+    headers: Mapping[str, str] = field(repr=False)
     body: ResponseBody = field(repr=False)
 
 
@@ -78,12 +81,12 @@ class SafeFetcher:
         resolver: Resolver,
         transport: Transport,
         now: Callable[[], datetime],
-        monotonic: Callable[[], float] = lambda: 0.0,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._resolver = resolver
         self._transport = transport
         self._now = now
-        self._monotonic = monotonic
+        self._monotonic = monotonic or time.monotonic
 
     async def fetch(self, url: str, source: SourceDefinition) -> FetchResult:
         current_url = self._validate_url(url, source)
@@ -93,14 +96,19 @@ class SafeFetcher:
             while True:
                 parsed = urlsplit(current_url)
                 assert parsed.hostname is not None
-                pinned_ip = await self._resolve_safe_ip(parsed.hostname, deadline)
-                response = await self._transport.request(
-                    TransportRequest(
+                pinned_ip = await self._await_with_deadline(
+                    self._resolve_safe_ip(parsed.hostname, deadline), deadline
+                )
+                response = await self._await_with_deadline(
+                    self._transport.request(
+                        TransportRequest(
                         url=current_url,
                         pinned_ip=pinned_ip,
                         host_header=parsed.hostname,
                         total_timeout_seconds=deadline.remaining(),
-                    )
+                        )
+                    ),
+                    deadline,
                 )
                 deadline.remaining()
                 location = _header(response.headers, "location")
@@ -131,13 +139,23 @@ class SafeFetcher:
                 http_status=None,
             )
 
+    async def _await_with_deadline(self, awaitable: Awaitable[T], deadline: _Deadline) -> T:
+        try:
+            async with asyncio.timeout(deadline.remaining()):
+                result = await awaitable
+        except TimeoutError:
+            raise _DeadlineExceeded from None
+        deadline.remaining()
+        return result
+
     async def _read_bounded(self, body: ResponseBody, deadline: _Deadline) -> bytes | None:
         chunks: list[bytes] = []
         total = 0
         while True:
             deadline.remaining()
             permitted = min(READ_CHUNK_BYTES, MAX_ENCODED_BYTES - total + 1)
-            chunk = await body.read_chunk(permitted)
+            chunk = await self._await_with_deadline(body.read_chunk(permitted), deadline)
+            assert isinstance(chunk, BodyChunk)
             deadline.remaining()
             if len(chunk.data) > permitted:
                 return None

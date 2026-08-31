@@ -82,3 +82,28 @@ Commit message: `feat: ingest only allowlisted bounded sources`. The final commi
 ### Self-review
 
 The report remains evidence only; no application module imports or reads `.superpowers`. The transport boundary now makes pinning and bounded streaming explicit, while a future concrete transport must honour `pinned_ip`, original authority/TLS host, and passed remaining deadline. No migration, Plan.md, specification, implementation plan, digest behavior, live network access, or automatic publication was changed.
+
+## Fix round 2/5 — production deadline and durable source catalog
+
+### Fresh RED
+
+`python -m pytest tests/security/test_ssrf.py tests/integration/test_source_repository.py -q` initially failed at collection with `ModuleNotFoundError: bodrye_bot.db.repositories.sources`, proving the required persistent repository was absent. The first PostgreSQL GREEN attempt then revealed two real persistence defects: duplicate PubMed canonical URLs collapsed the three feeds, and the updater was incorrectly invoked inside an already-active UoW in the test. PubMed records now have distinct versioned RSS URLs and the updater owns its UoW transaction.
+
+### Fixes and covering files
+
+- `src/bodrye_bot/sources/fetcher.py` now defaults to `time.monotonic`, wraps resolver, transport and every body read in `asyncio.timeout` using one remaining 20-second deadline, while retaining injected monotonic clocks for deterministic tests. `HttpResponse.headers` is repr-hidden; URL/body fields remain hidden.
+- `tests/security/test_ssrf.py` proves default deadline expiry by monkeypatching the real default clock without sleeping, and proves a query-bearing `Location` header cannot leak through `repr`.
+- `src/bodrye_bot/db/repositories/sources.py` is the owner-scoped SQLAlchemy source catalog repository. It persists the versioned registry, source version, roles, access/status, check/license fields, PubMed configuration and allowlist in existing `Source` columns/config JSON. `src/bodrye_bot/db/uow.py` exposes it from the existing atomic transaction boundary.
+- `tests/integration/test_source_repository.py` covers seed/load, neutral foreign-owner rejection, persisted versioned PubMed update and safe configuration audit metadata.
+- `src/bodrye_bot/sources/catalog.py` now rejects any query sequence other than exactly three non-empty strings with the typed safe transition error before persistence. `tests/unit/sources/test_catalog.py` covers underflow, overflow and empty query rejection.
+
+### GREEN verification
+
+| Command | Result |
+|---|---|
+| `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest tests/unit/sources tests/security/test_ssrf.py tests/security/test_prompt_injection.py tests/integration/test_source_repository.py -q` | 34 passed in 2.52s |
+| `python -m pytest tests/unit/domain/test_errors.py tests/unit/providers/test_safe_errors.py tests/contract/test_llm_contract.py tests/architecture/test_scope.py -q` | 44 passed in 1.63s |
+| `python -m ruff check .` | All checks passed |
+| `python -m mypy src evals` | Success: no issues found in 59 source files |
+| `git diff --check` | passed |
+| `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest -q` | 310 passed in 34.19s |

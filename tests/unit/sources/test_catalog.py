@@ -153,3 +153,25 @@ async def test_owner_update_rolls_back_save_if_audit_fails():
 
     assert uow.rolled_back is True
     assert uow.catalogs.saved is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "queries",
+    (("one", "two"), ("one", "two", "three", "four"), ("one", "", "three")),
+)
+async def test_query_update_rejects_nonexact_query_tuple_before_persistence(queries):
+    """Break caught: malformed onboarding query counts crash or silently change registry scope."""
+    class Uow:
+        async def __aenter__(self):
+            raise AssertionError("invalid input must not open persistence")
+
+    from bodrye_bot.domain.errors import SafeError
+
+    with pytest.raises(SafeError):
+        await SourceCatalogUpdater(uow=Uow()).update_pubmed_queries(  # type: ignore[arg-type]
+            owner_id=42,
+            current=SourceCatalog.initial(),
+            version="source-registry-v2",
+            queries=queries,  # type: ignore[arg-type]
+        )

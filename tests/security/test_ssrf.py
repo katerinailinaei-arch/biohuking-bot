@@ -295,3 +295,39 @@ async def test_content_hash_uses_complete_sanitized_content_not_excerpt_only():
 
     assert first.bounded_excerpt == second.bounded_excerpt
     assert first.content_hash != second.content_hash
+
+
+@pytest.mark.asyncio
+async def test_default_monotonic_deadline_is_live_and_expires_without_adapter_trust(monkeypatch):
+    """Break caught: production defaults use a frozen clock and never enforce total timeout."""
+    import bodrye_bot.sources.fetcher as fetcher_module
+
+    clock = Clock()
+    monkeypatch.setattr(fetcher_module.time, "monotonic", clock)
+
+    class AdvancingResolver(Resolver):
+        async def resolve(self, hostname: str, *, timeout_seconds: float = 20):
+            clock.value = 21
+            return await super().resolve(hostname, timeout_seconds=timeout_seconds)
+
+    fetcher = SafeFetcher(
+        resolver=AdvancingResolver([("93.184.216.34",)]),
+        transport=Transport([]),
+        now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+    )
+
+    result = await fetcher.fetch("https://www.who.int/fact-sheets", evidence_source())
+
+    assert result.status is FetchStatus.UNAVAILABLE
+
+
+def test_response_repr_hides_location_url_and_query_token():
+    """Break caught: redirect headers disclose token-bearing URLs through repr or logs."""
+    response = HttpResponse(
+        status_code=302,
+        headers={"Location": "https://www.who.int/x?token=secret-value"},
+        body=ChunkBody([]),
+    )
+
+    assert "secret-value" not in repr(response)
+    assert "https://www.who.int" not in repr(response)
