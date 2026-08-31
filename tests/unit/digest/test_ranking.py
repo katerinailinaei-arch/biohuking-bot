@@ -4,7 +4,12 @@ from datetime import date
 
 import pytest
 
-from bodrye_bot.digest.service import DigestCandidate, DigestService, DigestWeightConfig
+from bodrye_bot.digest.service import (
+    DigestCandidate,
+    DigestService,
+    DigestWeightConfig,
+    PreliminaryRisk,
+)
 from bodrye_bot.domain.sources import SourceRole
 
 
@@ -24,7 +29,7 @@ def _candidate(*, url: str, **scores: float) -> DigestCandidate:
         source_authority=scores["source_authority"],
         audience_fit=scores["audience_fit"],
         novelty=scores["novelty"],
-        preliminary_risk=scores["preliminary_risk"],
+        preliminary_risk=PreliminaryRisk.GREEN,
     )
 
 
@@ -48,7 +53,6 @@ def test_digest_uses_literal_versioned_weights_and_never_pads_with_weak_cards() 
         source_authority=0.9,
         audience_fit=0.8,
         novelty=0.7,
-        preliminary_risk=1.0,
     )
     threshold = _candidate(
         url="https://example.org/threshold-b",
@@ -57,7 +61,6 @@ def test_digest_uses_literal_versioned_weights_and_never_pads_with_weak_cards() 
         source_authority=0.8,
         audience_fit=0.6,
         novelty=0.6,
-        preliminary_risk=0.8,
     )
     weak = _candidate(
         url="https://example.org/weak-c",
@@ -66,19 +69,18 @@ def test_digest_uses_literal_versioned_weights_and_never_pads_with_weak_cards() 
         source_authority=0.4,
         audience_fit=0.4,
         novelty=0.4,
-        preliminary_risk=0.4,
     )
 
     digest = DigestService(weights=weights).build(
         (weak, threshold, strong), digest_date=date(2026, 9, 1)
     )
 
-    assert [card.score for card in digest.cards] == [0.88, 0.71]
+    assert [card.score for card in digest.cards] == [0.88, 0.73]
     assert [card.score_version for card in digest.cards] == [
-        "digest-scoring-test-v1",
-        "digest-scoring-test-v1",
+        weights.id,
+        weights.id,
     ]
-    assert digest.cards[1].selection_reason == "Оценка 0.71 не ниже порога 0.70."
+    assert digest.cards[1].selection_reason == "Оценка 0.73 не ниже порога 0.70."
     assert digest.cards[0].actions == ("Развить", "Сохранить", "Не интересно", "Источник")
 
 
@@ -86,12 +88,11 @@ def test_digest_allows_zero_cards_when_every_candidate_is_below_threshold() -> N
     """Break caught: a quiet source day fabricates a weak digest card."""
     candidate = _candidate(
         url="https://example.org/weak-a",
-        relevance=0.69,
-        freshness=0.69,
-        source_authority=0.69,
-        audience_fit=0.69,
-        novelty=0.69,
-        preliminary_risk=0.69,
+        relevance=0.66,
+        freshness=0.66,
+        source_authority=0.66,
+        audience_fit=0.66,
+        novelty=0.66,
     )
 
     digest = DigestService().build((candidate,), digest_date=date(2026, 9, 1))

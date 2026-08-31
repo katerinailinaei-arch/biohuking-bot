@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from bodrye_bot.digest.service import DigestCandidate, DigestService
+from bodrye_bot.digest.service import DigestCandidate, DigestService, PreliminaryRisk
 from bodrye_bot.domain.sources import SourceRole
 
 
@@ -28,7 +28,7 @@ def _candidate(
         source_authority=0.9,
         audience_fit=0.9,
         novelty=0.8,
-        preliminary_risk=0.9,
+        preliminary_risk=PreliminaryRisk.GREEN,
     )
 
 

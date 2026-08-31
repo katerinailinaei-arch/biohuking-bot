@@ -4,6 +4,7 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bodrye_bot.db.repositories.digest_runs import SqlAlchemyDigestRunRepository
 from bodrye_bot.db.repositories.sources import SqlAlchemySourceCatalogRepository
 from bodrye_bot.db.repositories.workflows import SqlAlchemyWorkflowRepository
 from bodrye_bot.operations.audit import SqlAlchemyAuditWriter
@@ -19,6 +20,7 @@ class SqlAlchemyUnitOfWork:
         self._workflows: SqlAlchemyWorkflowRepository | None = None
         self._audit: SqlAlchemyAuditWriter | None = None
         self._catalogs: SqlAlchemySourceCatalogRepository | None = None
+        self._digest_runs: SqlAlchemyDigestRunRepository | None = None
         self._active = False
         self._finished = False
 
@@ -46,6 +48,12 @@ class SqlAlchemyUnitOfWork:
         assert self._catalogs is not None
         return self._catalogs
 
+    @property
+    def digest_runs(self) -> SqlAlchemyDigestRunRepository:
+        self._ensure_transaction_open()
+        assert self._digest_runs is not None
+        return self._digest_runs
+
     async def __aenter__(self) -> SqlAlchemyUnitOfWork:
         if self._active:
             raise RuntimeError("UnitOfWork is already active")
@@ -70,6 +78,7 @@ class SqlAlchemyUnitOfWork:
             session,
             ensure_active=self._ensure_transaction_open,
         )
+        self._digest_runs = SqlAlchemyDigestRunRepository(session)
         return self
 
     async def __aexit__(
@@ -93,6 +102,7 @@ class SqlAlchemyUnitOfWork:
                 self._workflows = None
                 self._audit = None
                 self._catalogs = None
+                self._digest_runs = None
 
     async def commit(self) -> None:
         self._ensure_transaction_open()

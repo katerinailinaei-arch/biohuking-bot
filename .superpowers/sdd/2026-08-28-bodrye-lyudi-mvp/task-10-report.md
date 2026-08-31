@@ -59,3 +59,36 @@ Commit message: `feat: deliver quality-gated morning digest` (final hash is reco
 - No Task 11 claim/evidence/medical policy behavior was added.
 - `Plan.md`, canonical spec, and implementation plan were not edited or staged by this task.
 - A separate reviewer subagent was intentionally not dispatched because the controller explicitly prohibited subagents for this task; the scoped diff and fresh full suite were reviewed locally instead.
+
+## Review round 1 — durability and reproducibility repair
+
+### RED/GREEN evidence
+
+1. New review tests first produced two expected collection errors: missing `PreliminaryRisk`/`ScoringSnapshot` and missing `SqlAlchemyDigestRunRepository`.
+2. After the initial implementation, focused digest tests reached `20 passed, 2 skipped` without PostgreSQL configuration.
+3. With `TEST_DATABASE_URL`, the new PostgreSQL tests first exposed a fixed test owner reused from a prior local run; using randomized owners made the owner-isolation test independent. Green result: `22 passed in 3.36s` for digest unit/e2e plus digest-run integration tests.
+4. Full suite first found three migration-contract failures because `tests/integration/test_migrations.py` did not list the new required `digest_runs` table. The migration table contract was extended; final full suite is `334 passed in 54.68s`.
+
+### Changes
+
+- Added immutable `ScoringSnapshot`; its ID is a SHA-256 fingerprint of canonical version, weights, threshold, maximum-card count, and aggregation strategy. Cards retain the full snapshot, raw score, display score, and components.
+- Enforced a minimum selection threshold of 0.70 and at most five cards. Threshold comparison uses raw score before rounding.
+- Replaced caller-supplied risk score with validated `PreliminaryRisk` (`green`, `yellow`, `red`) and a deterministic safety component (1.0, 0.5, 0.0). Candidate source content/URLs are excluded from dataclass repr.
+- Normalized query order, deterministic representative selection, date conversion, and required 2–3 sentence/required-field validation.
+- Added `DigestRun` ORM model and Alembic `0009_digest_runs` migration with unique `(owner_id, digest_date)` and allowed-state check. Added repository/UoW wiring and an atomic PostgreSQL `INSERT .. ON CONFLICT` claim.
+- Processing leases expire conservatively to `delivery_unknown`; known pre-send outcomes are releaseable; known successful delivery records actual injected-clock time and lateness. Generic delivery exceptions are `delivery_unknown` and never silently retried.
+- View now lists escaped source names with Russian safe statuses, source roles, score components, and scoring version.
+
+### New verification
+
+| Command | Fresh result |
+| --- | --- |
+| `DATABASE_URL=... python -m alembic downgrade 0008_style_profile_binding; python -m alembic upgrade head` | 0009 downgrade and re-upgrade passed |
+| `python -m ruff check .` | All checks passed |
+| `python -m mypy src evals` | Success: no issues found in 65 source files |
+| `TEST_DATABASE_URL=... python -m pytest tests/integration/test_digest_runs.py tests/unit/digest tests/e2e/test_digest_delivery.py -q` | 22 passed in 3.36s |
+| `TEST_DATABASE_URL=... python -m pytest -q` | 334 passed in 54.68s |
+
+### Remaining boundary
+
+The production composition root has not yet been created in the scaffold, so `SqlAlchemyDigestRunRepository` is exposed through `SqlAlchemyUnitOfWork.digest_runs` for the future worker composition. No live Telegram/source/LLM behavior was introduced.

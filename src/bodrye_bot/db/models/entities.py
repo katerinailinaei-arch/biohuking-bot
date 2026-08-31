@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -10,6 +10,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKeyConstraint,
@@ -167,6 +168,23 @@ class DigestItem(OwnedRecord, MutableRecord, Base):
     score_components: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     digest_date: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class DigestRun(OwnedRecord, MutableRecord, Base):
+    __tablename__ = "digest_runs"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "digest_date", name="uq_digest_run_owner_date"),
+        CheckConstraint(
+            "status IN ('processing', 'retryable', 'delivered', 'delivery_unknown')",
+            name="digest_run_status_known",
+        ),
+    )
+
+    digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    delivered_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    late: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class ContentWorkflow(OwnedRecord, MutableRecord, Base):
