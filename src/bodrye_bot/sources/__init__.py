@@ -1,0 +1,1 @@
+"""Allowlisted source ingestion adapters."""
