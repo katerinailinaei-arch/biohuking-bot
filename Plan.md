@@ -144,9 +144,9 @@
 
 **Готовое состояние:** worker безопасно читает только allowlisted-источники, сохраняет provenance и в 10:00 MSK даёт до 3–5 сильных недублирующихся карточек, не додумывая недоступное.
 
-#### P3.T9. Source registry, SSRF-safe fetch, extraction/provenance — ⬜ NOT_STARTED
+#### P3.T9. Source registry, SSRF-safe fetch, extraction/provenance — ✅ DONE
 
-- [ ] **P3.T9 завершена и имеет evidence.**
+- [x] **P3.T9 завершена и имеет evidence.**
 - **Файлы:** create `domain/sources.py`, `sources/catalog.py`, `sources/fetcher.py`, `sources/extraction.py`; tests `tests/unit/sources/test_catalog.py`, `tests/security/test_ssrf.py`, `test_prompt_injection.py`.
 - **Тесты:** HTTP(S)-only, DNS/IP/redirect revalidation, private/metadata denylist, 10 MiB cap, 5s connect/20s total, max 3 redirects, HTML sanitizing, 24h raw TTL, injection delimiters, unavailable source never reaches LLM.
 - **Зависит от:** Gate P2.
@@ -333,7 +333,7 @@ all gates ───────────────────────�
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
 | P2 | T8: style calibration and learning | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | ✅ DONE | Нет |
-| P3 | T9–T10: sources and digest | Код не создан | ⬜ NOT_STARTED | Утверждённый source registry из MVP-spec; Gate P2 пройден |
+| P3 | T9–T10: sources and digest | P3.T9 DONE: versioned owner-scoped registry, SSRF-safe bounded streaming fetch, sanitized provenance, AC-04 LLM isolation; independent review PASS; full pytest 312; P3.T10 ещё не начата | 🟡 IN_PROGRESS | Нет; следующий шаг P3.T10 |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
 | P5 | T13: approval/schedule/publication | Код не создан | ⬜ NOT_STARTED | Gate P4; test Telegram channel для live gate |
 | P6 | T14–T16: deletion, costs, health, backup, deploy | Код не создан | ⬜ NOT_STARTED | Gate P5; Beget/S3/age inputs для live gate |
@@ -360,6 +360,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-08-31T22:09:26Z | P3.T9 | 8ff9087+worktree | Commits 86db880..8ff9087; TDD RED missing source boundary, then security/repository regressions including multicast, streaming cutoff, total deadline, delimiter injection and dependent-document FK; four reviewed fix rounds; independent final re-review PASS; controller focused source/security/PostgreSQL 36 passed; full pytest 312 passed in 52.50s; Alembic check no drift; Ruff clean; strict mypy clean (59 files); Plan validator PLAN_OK. | Plan.md | Нет |
+| 2026-08-31T17:56:10Z | P3.T9 start | 41b052c+worktree | Gate P2 подтверждён; plan validator PLAN_OK; после запуска локальной тестовой PostgreSQL baseline full pytest: 276 passed in 33.78s; начата TDD-реализация source registry, SSRF-safe fetch и provenance. | Plan.md | Первый baseline упал только из-за выключенной PostgreSQL; после восстановления повторён полностью и прошёл |
 | 2026-08-30T09:46:04Z | P2 | aa051da+worktree | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | Plan.md | Нет |
 | 2026-08-30T09:46:04Z | P2.T8 | aa051da+worktree | Implementation 2f4758a..aa051da; Keti completed 8 calibration topics, explicitly confirmed 5 rules and rated 3 unseen holdouts 5/5 with 3/3 accepted; trusted report SHA-256 10719718c2118ed1a3d0823051c9f6bcb949adc876fc3d48e9a3f46a1aea4dc1; independent final review PASS; full pytest 276 passed; Alembic check no drift; Ruff and strict mypy clean. | evals/style/keti-calibration-v1.json | Нет |
 | 2026-08-30T07:24:48Z | P2.T8 implementation | fa00816+worktree | Commits 2f4758a..fa00816; TDD RED missing style modules/repository/invariants; 4 fix rounds; independent review PASS; controller full pytest 256 passed in 45.33s; Alembic check no drift; Ruff clean; strict mypy 50 files; Plan validator OK. | Plan.md | Task/Gate P2 остаются IN_PROGRESS до реальных calibration selections и 3 holdout ratings Кети; fixtures не заменяют owner decision |
