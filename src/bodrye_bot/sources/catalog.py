@@ -242,7 +242,7 @@ def replace_source_query(
 ) -> SourceDefinition:
     return SourceDefinition(
         name=source.name,
-        canonical_url=source.canonical_url,
+        canonical_url=_pubmed_url(query),
         kind=source.kind,
         roles=source.roles,
         access_method=source.access_method,
@@ -283,7 +283,7 @@ def _web(
 def _pubmed(name: str, query: str, checked_at: datetime, license_note: str) -> SourceDefinition:
     return SourceDefinition(
         f"PubMed RSS: {name}",
-        f"https://pubmed.ncbi.nlm.nih.gov/rss/?term={quote_plus(query)}",
+        _pubmed_url(query),
         SourceKind.PUBMED_RSS,
         (SourceRole.TOPIC,),
         AccessMethod.RSS,
@@ -294,6 +294,10 @@ def _pubmed(name: str, query: str, checked_at: datetime, license_note: str) -> S
         ("pubmed.ncbi.nlm.nih.gov",),
         {"query_version": "pubmed-rss-v1", "query": query},
     )
+
+
+def _pubmed_url(query: str) -> str:
+    return f"https://pubmed.ncbi.nlm.nih.gov/rss/?term={quote_plus(query)}"
 
 
 __all__ = [

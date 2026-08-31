@@ -107,3 +107,18 @@ The report remains evidence only; no application module imports or reads `.super
 | `python -m mypy src evals` | Success: no issues found in 59 source files |
 | `git diff --check` | passed |
 | `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest -q` | 310 passed in 34.19s |
+
+## Fix round 3/5 — PubMed URL/query consistency
+
+### RED and fix
+
+`tests/integration/test_source_repository.py::test_pubmed_update_round_trip_replaces_query_bearing_urls_without_stale_rows` failed because the updated `config['query']` was `metabolic health`, while decoded `canonical_url?term=` still held the seed query `nutrition AND metabolic health`.
+
+`_pubmed_url(query)` is now the sole URL derivation helper and `replace_source_query` uses it. The existing owner-scoped repository deletes stale definitions absent from the current version before upserting the exact current ten records, so loading latest catalog has no old-query PubMed row. Audit metadata remains version/count-only.
+
+### Covering verification
+
+- `tests/integration/test_source_repository.py` now proves all three updated queries match decoded URL terms, round-trip source URLs equal the changed catalog, no stale URL remains, and the latest registry has exactly ten sources.
+- `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest tests/unit/sources tests/security/test_ssrf.py tests/security/test_prompt_injection.py tests/integration/test_source_repository.py -q` — 35 passed in 3.66s.
+- Relevant regressions: 44 passed in 3.74s; Ruff and strict mypy passed; `git diff --check` passed.
+- Full PostgreSQL suite: 311 passed in 37.02s.
