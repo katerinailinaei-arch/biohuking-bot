@@ -122,3 +122,57 @@ The report remains evidence only; no application module imports or reads `.super
 - `TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest tests/unit/sources tests/security/test_ssrf.py tests/security/test_prompt_injection.py tests/integration/test_source_repository.py -q` — 35 passed in 3.66s.
 - Relevant regressions: 44 passed in 3.74s; Ruff and strict mypy passed; `git diff --check` passed.
 - Full PostgreSQL suite: 311 passed in 37.02s.
+
+## Fix round 4/5 — preserve provenance when a source URL changes
+
+### PostgreSQL RED
+
+Added `test_pubmed_update_preserves_document_provenance_and_loads_only_current_catalog`
+before changing production code. The test seeded the initial catalog, inserted a real
+`SourceDocument` referencing the old PubMed source, and then updated all three PubMed
+queries through `SourceCatalogUpdater` so catalog persistence and the safe audit write
+shared the existing UoW.
+
+`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:55432/bodrye_bot_test; python -m pytest tests/integration/test_source_repository.py::test_pubmed_update_preserves_document_provenance_and_loads_only_current_catalog -vv`
+failed as intended: 1 failed in 4.98s with PostgreSQL `ForeignKeyViolationError` on
+`fk_source_document_source_owner`. The failure came from the repository's bulk delete
+of old canonical URLs, directly proving that query reconfiguration attempted to erase
+referenced provenance.
+
+### Fix
+
+- `SqlAlchemySourceCatalogRepository.save` no longer deletes source history. A source
+  absent from the next current catalog is marked `retired`, with
+  `catalog_current=false` and the superseding registry version retained in existing
+  `status`/`config_json` fields; no schema or migration changed.
+- New and unchanged definitions are marked `catalog_current=true`. Existing canonical
+  URLs are updated in place, preserving their IDs and canonical URL uniqueness.
+- Repository loading filters out retired history before validating the registry
+  version, so the latest load returns exactly ten current definitions and no stale
+  PubMed query URL.
+- The PostgreSQL test proves the old Source and SourceDocument owner-bound provenance
+  remain intact, all seven unchanged source IDs survive, three old PubMed rows are
+  retired, ten rows are current, and audit metadata is exactly registry version,
+  PubMed query version, and source count. No query, URL, excerpt, or raw content enters
+  the audit event.
+
+### GREEN verification
+
+| Command | Result |
+|---|---|
+| dependent-document PostgreSQL test | 1 passed in 3.03s |
+| focused unit source + SSRF + prompt-injection + PostgreSQL repository suite | 36 passed in 5.73s |
+| error/provider/LLM contract/architecture/owner repository regressions | 53 passed in 9.09s |
+| full suite with `TEST_DATABASE_URL` | 312 passed in 53.41s |
+| `python -m ruff check .` | All checks passed |
+| `python -m mypy src evals` | Success: no issues found in 59 source files |
+| `git diff --check` | passed |
+
+### Scope and self-review
+
+Only the source catalog repository/status and its PostgreSQL integration coverage were
+changed. `Plan.md`, migrations, Task 10 behavior, specification, implementation plan,
+network behavior, and deployment were not changed. Historical rows are intentionally
+retained; the existing owner/canonical URL unique constraint remains authoritative.
+
+Commit message: `fix: preserve source catalog provenance`.

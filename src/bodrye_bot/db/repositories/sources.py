@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, NoReturn
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bodrye_bot.db.models import Source
@@ -25,20 +25,25 @@ class SqlAlchemySourceCatalogRepository:
 
     async def save(self, owner_id: int, catalog: SourceCatalog) -> None:
         self._ensure_active()
-        canonical_urls = [definition.canonical_url for definition in catalog.sources]
-        await self._session.execute(
-            delete(Source).where(
-                Source.owner_id == owner_id,
-                Source.canonical_url.not_in(canonical_urls),
-            )
-        )
-        for definition in catalog.sources:
-            stored = await self._session.scalar(
-                select(Source).where(
-                    Source.owner_id == owner_id,
-                    Source.canonical_url == definition.canonical_url,
+        records = list(
+            (
+                await self._session.execute(
+                    select(Source).where(Source.owner_id == owner_id)
                 )
-            )
+            ).scalars()
+        )
+        stored_by_url = {record.canonical_url: record for record in records}
+        canonical_urls = {definition.canonical_url for definition in catalog.sources}
+        for record in records:
+            if record.canonical_url not in canonical_urls and _is_current(record):
+                record.status = SourceStatus.RETIRED.value
+                record.config_json = {
+                    **record.config_json,
+                    "catalog_current": False,
+                    "superseded_by_registry_version": catalog.version,
+                }
+        for definition in catalog.sources:
+            stored = stored_by_url.get(definition.canonical_url)
             values = _values(definition, catalog.version)
             if stored is None:
                 self._session.add(Source(owner_id=owner_id, **values))
@@ -58,6 +63,7 @@ class SqlAlchemySourceCatalogRepository:
                 )
             ).scalars()
         )
+        records = [record for record in records if _is_current(record)]
         if not records:
             raise SafeError.for_code(SafeErrorCode.OWNER_FORBIDDEN)
         versions = {str(record.config_json.get("registry_version", "")) for record in records}
@@ -74,6 +80,8 @@ def _values(definition: SourceDefinition, registry_version: str) -> dict[str, ob
     config["registry_version"] = registry_version
     config["source_version"] = definition.version
     config["allowed_hosts"] = list(definition.allowed_hosts)
+    config["catalog_current"] = True
+    config.pop("superseded_by_registry_version", None)
     return {
         "name": definition.name,
         "canonical_url": definition.canonical_url,
@@ -90,6 +98,8 @@ def _values(definition: SourceDefinition, registry_version: str) -> dict[str, ob
 def _definition(record: Source) -> SourceDefinition:
     config = dict(record.config_json)
     config.pop("registry_version")
+    config.pop("catalog_current", None)
+    config.pop("superseded_by_registry_version", None)
     source_version = str(config.pop("source_version"))
     allowed_hosts = tuple(str(host) for host in config.pop("allowed_hosts", []))
     return SourceDefinition(
@@ -105,6 +115,10 @@ def _definition(record: Source) -> SourceDefinition:
         allowed_hosts=allowed_hosts,
         config={str(key): str(value) for key, value in config.items()},
     )
+
+
+def _is_current(record: Source) -> bool:
+    return record.config_json.get("catalog_current", True) is True
 
 
 __all__ = ["SqlAlchemySourceCatalogRepository"]

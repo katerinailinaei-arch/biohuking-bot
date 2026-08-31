@@ -31,6 +31,7 @@ class AccessMethod(StrEnum):
 class SourceStatus(StrEnum):
     ACTIVE = "active"
     MANUAL = "manual"
+    RETIRED = "retired"
 
 
 @dataclass(frozen=True)
