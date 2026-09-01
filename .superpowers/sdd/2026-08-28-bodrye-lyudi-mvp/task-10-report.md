@@ -119,3 +119,11 @@ The production composition root has not yet been created in the scaffold, so `Sq
 | `git diff --check` | passed |
 | PostgreSQL focused digest | 24 passed in 2.43s |
 | PostgreSQL full suite | 338 passed in 40.45s |
+
+## Review round 3 — conservative terminal fencing
+
+- RED: `tests/unit/digest/test_review_round_three.py` failed 2/2 as expected: the old aggregation ID did not describe risk-min behavior, and a false delivered fence still returned success.
+- GREEN: focused digest unit/e2e/store suite passed `28 passed in 2.88s`; full PostgreSQL suite passed `340 passed in 41.57s`; Ruff and mypy were clean.
+- Scoring now identifies `component_max_risk_min_v2`, including it in the immutable snapshot fingerprint. Ordinary components aggregate by max; provenance risk safety aggregates by min.
+- A rejected `mark_delivered` fence now raises redacted `SafeErrorCode.DELIVERY_UNKNOWN`; rejected retry/unknown fences receive the same conservative treatment.
+- Added independent-store PostgreSQL race coverage (exactly one durable claim) and prior-day lease-sweep coverage. Removed the UoW `digest_runs` path and public legacy repository export so lifecycle users must use the independently committing store.

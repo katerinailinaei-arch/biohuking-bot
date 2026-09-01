@@ -77,7 +77,7 @@ def test_scoring_snapshot_identity_binds_weights_threshold_and_aggregation() -> 
         weights=first.weights,
         min_score=0.71,
         maximum_cards=5,
-        aggregation="component_max_v1",
+        aggregation="component_max_risk_min_v2",
     )
 
     assert first.id != changed.id

@@ -46,7 +46,7 @@ class ScoringSnapshot:
     weights: Mapping[str, float] = field(default_factory=lambda: dict(_DEFAULT_WEIGHTS))
     min_score: float = 0.70
     maximum_cards: int = 5
-    aggregation: str = "component_max_v1"
+    aggregation: str = "component_max_risk_min_v2"
 
     def __post_init__(self) -> None:
         frozen = MappingProxyType(dict(self.weights))
@@ -61,7 +61,7 @@ class ScoringSnapshot:
             raise ValueError("Digest threshold must be at least 0.70")
         if not 1 <= self.maximum_cards <= 5:
             raise ValueError("Digest maximum cards must be between 1 and 5")
-        if self.aggregation != "component_max_v1":
+        if self.aggregation != "component_max_risk_min_v2":
             raise ValueError("unsupported digest aggregation")
         object.__setattr__(self, "weights", frozen)
 
@@ -70,13 +70,15 @@ class ScoringSnapshot:
         return cls()
 
     def as_dict(self) -> Mapping[str, object]:
-        return MappingProxyType({
-            "version": self.version,
-            "weights": MappingProxyType(dict(sorted(self.weights.items()))),
-            "min_score": self.min_score,
-            "maximum_cards": self.maximum_cards,
-            "aggregation": self.aggregation,
-        })
+        return MappingProxyType(
+            {
+                "version": self.version,
+                "weights": MappingProxyType(dict(sorted(self.weights.items()))),
+                "min_score": self.min_score,
+                "maximum_cards": self.maximum_cards,
+                "aggregation": self.aggregation,
+            }
+        )
 
     @property
     def id(self) -> str:
@@ -92,7 +94,7 @@ class ScoringSnapshot:
             sort_keys=True,
             separators=(",", ":"),
         )
-        return f"{self.version}:{sha256(canonical.encode()).hexdigest()[:16]}"
+        return f"{self.version}:{self.aggregation}:{sha256(canonical.encode()).hexdigest()[:16]}"
 
 
 DigestWeightConfig = ScoringSnapshot

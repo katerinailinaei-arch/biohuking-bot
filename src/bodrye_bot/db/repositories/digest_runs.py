@@ -24,7 +24,7 @@ class DigestRunRecord:
     late: bool | None
 
 
-class SqlAlchemyDigestRunRepository:
+class _SessionDigestRunReader:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -245,7 +245,7 @@ class SqlAlchemyDigestRunStore:
 
     async def get(self, *, owner_id: int, digest_date: date) -> DigestRunRecord:
         async with self._session_factory() as session:
-            return await SqlAlchemyDigestRunRepository(session).get(
+            return await _SessionDigestRunReader(session).get(
                 owner_id=owner_id, digest_date=digest_date
             )
 
@@ -253,6 +253,5 @@ class SqlAlchemyDigestRunStore:
 __all__ = [
     "DigestRunClaim",
     "DigestRunRecord",
-    "SqlAlchemyDigestRunRepository",
     "SqlAlchemyDigestRunStore",
 ]
