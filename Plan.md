@@ -166,7 +166,7 @@
 
 **Готовое состояние:** после подтверждённого extraction бот показывает claims/evidence/ограничения, три разные подачи, создаёт валидный Telegram-пост; unsafe/stale версия не может быть утверждена.
 
-#### P4.T11. Claims, evidence и hard medical gate — ⬜ NOT_STARTED
+#### P4.T11. Claims, evidence и hard medical gate — 🟡 IN_PROGRESS
 
 - [ ] **P4.T11 завершена и имеет evidence.**
 - **Файлы:** create `domain/medical.py`, `medical/review.py`, `medical/policy.py`; tests `tests/unit/medical/test_policy.py`, `tests/e2e/test_claim_review.py`.
@@ -334,7 +334,7 @@ all gates ───────────────────────�
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
 | P2 | T8: style calibration and learning | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | ✅ DONE | Нет |
 | P3 | T9–T10: sources and digest | P3.T9 and P3.T10 DONE; SSRF/injection and durable digest gates passed; independent reviews PASS; full PostgreSQL suite 343 passed; migrations, Ruff, mypy and plan validation clean. | ✅ DONE | Нет |
-| P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
+| P4 | T11–T12: medical and editorial | P4.T11 implementation `b821e80..875d67b`: claim-level medical gate, real catalog provenance, provider-run/response binding, freshness, durable attempts and exact draft binding; focused 130 passed, full PostgreSQL pytest 388 passed; первичное review = NEEDS_FIXES, fix round 1 выполнен | 🟡 IN_PROGRESS | Scoped re-review fix round 1 не завершён: reviewer исчерпал лимит; переход к P4.T12 запрещён до независимого PASS |
 | P5 | T13: approval/schedule/publication | Код не создан | ⬜ NOT_STARTED | Gate P4; test Telegram channel для live gate |
 | P6 | T14–T16: deletion, costs, health, backup, deploy | Код не создан | ⬜ NOT_STARTED | Gate P5; Beget/S3/age inputs для live gate |
 | P7 | T17: acceptance and pilot | Код не создан | ⬜ NOT_STARTED | Gate P6; owner secrets/permissions для production smoke |
@@ -360,6 +360,8 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-09-01T22:56:34Z | P4.T11 implementation/fix round 1 | 875d67b+worktree | Commits b821e80, 875d67b; TDD RED→GREEN; focused medical/provider/eval/PostgreSQL 130 passed; integration 97 passed; full PostgreSQL pytest 388 passed; Ruff, strict mypy, Alembic check and 0011 migration round-trip/preflight passed; первичный independent review нашёл 6 Critical/5 Important, fix round 1 реализован. | `.superpowers/sdd/2026-08-28-bodrye-lyudi-mvp/task-11-report.md` | Scoped re-review оборван внешним usage limit; P4.T11 остаётся IN_PROGRESS и P4.T12 не начинается до PASS |
+| 2026-09-01T12:46:39Z | P4.T11 start | e776150+worktree | Gate P3 подтверждён; clean worktree; Plan validator PLAN_OK; baseline full PostgreSQL pytest 343 passed; Ruff и strict mypy clean; начата TDD-реализация claims/evidence/risk gate. | Plan.md | Domain использует канонические `manual_required` и `review_incomplete`; существующий provider marker `manual_review` нормализуется на границе без смены provider schema |
 | 2026-09-01T07:29:50Z | P3 | e4afec4+worktree | P3.T9 and P3.T10 DONE; SSRF/injection and durable digest gates passed; independent reviews PASS; full PostgreSQL suite 343 passed; migrations, Ruff, mypy and plan validation clean. | Plan.md | Нет |
 | 2026-09-01T07:29:50Z | P3.T10 | e4afec4+worktree | Commits 6008a20..e4afec4; TDD and four repair rounds; independent final re-review PASS with 0 Critical/Important; controller digest unit/e2e/PostgreSQL 31 passed; full pytest 343 passed in 40.43s; Alembic 0010->0009->0010 and check passed; Ruff clean; strict mypy clean (66 files). | Plan.md | Нет |
 | 2026-08-31T22:14:01Z | P3.T10 start | 29276a0+worktree | P3.T9 review clean и DONE; baseline full pytest 312 passed in 52.50s; Alembic no drift; Ruff/mypy/Plan validator clean; начата TDD-реализация digest dedupe, quality threshold и weekday delivery. | Plan.md | Gate P3 остаётся открыт до завершения P3.T10 |
