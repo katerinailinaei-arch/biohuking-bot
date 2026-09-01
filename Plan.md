@@ -152,15 +152,15 @@
 - **Зависит от:** Gate P2.
 - **Результат:** AC-04; registry version/role/access/license/check date и bounded evidence provenance хранятся.
 
-#### P3.T10. Weekday digest, deduplication и quality threshold — ⬜ NOT_STARTED
+#### P3.T10. Weekday digest, deduplication и quality threshold — ✅ DONE
 
-- [ ] **P3.T10 завершена и имеет evidence.**
-- **Файлы:** create `digest/service.py`, `digest/views.py`, `digest/worker.py`; tests `tests/unit/digest/test_deduplication.py`, `test_ranking.py`, `tests/e2e/test_digest_delivery.py`.
-- **Тесты:** 10:00 Europe/Moscow weekdays, max 5, threshold prevents padding, URL/content/semantic dedupe, deterministic weights, partial digest with source failures listed by 10:10.
+- [x] **P3.T10 завершена и имеет evidence.**
+- **Файлы:** create `digest/service.py`, `digest/views.py`, `digest/worker.py`, `db/repositories/digest_runs.py`, migrations `0009_digest_runs.py` и `0010_digest_run_attempt.py`; tests `tests/unit/digest/*`, `tests/e2e/test_digest_delivery.py`, `tests/integration/test_digest_run_store.py`, `test_digest_worker_store.py`.
+- **Тесты:** 10:00 Europe/Moscow weekdays, max 5, threshold prevents padding, URL/content/semantic dedupe, deterministic weights, partial/empty digest, actual late completion, durable owner/date idempotency, lease expiry и attempt fencing.
 - **Зависит от:** P3.T9.
 - **Результат:** AC-03; карточки имеют provenance, risk preview, reason and owner-safe actions.
 
-**Gate P3:** SSRF/injection suite зелёный; source registry утверждён; unavailable и blocked sources не попадают в LLM; digest не заполняется слабыми карточками.
+**Gate P3 — ✅ PASS:** SSRF/injection suite зелёный; source registry утверждён; unavailable и blocked sources не попадают в LLM; digest не заполняется слабыми карточками. Независимые ревью P3.T9/P3.T10 = PASS; full PostgreSQL suite = 343 passed; Alembic round-trip/check, Ruff, strict mypy и `check_plan.py` прошли.
 
 ### P4. Evidence-first редакционный цикл
 
@@ -333,7 +333,7 @@ all gates ───────────────────────�
 | P0 | T0–T4: plan tooling, scaffold, domain, DB, repositories/audit | Independent P0.T4 review PASS; full pytest 105 passed; Ruff clean; strict mypy clean (24 files); Plan validator OK; PostgreSQL 0002→0004 downgrade-upgrade and Alembic check passed; current head 0004; owner/audit violations 0 | ✅ DONE | Нет |
 | P1 | T5–T7: owner Telegram, LLM adapters, eval | P1.T5-P1.T7 DONE with independent PASS reviews; full pytest 217 passed in 26.42s; focused owner/provider/eval gate 111 passed; fake eval 12/12 with schemas 100%, hard violations 0, safety 1.0; OpenAI remains fail-closed; Ruff clean; strict mypy clean (42 files). | ✅ DONE | Нет |
 | P2 | T8: style calibration and learning | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | ✅ DONE | Нет |
-| P3 | T9–T10: sources and digest | P3.T9 DONE: versioned owner-scoped registry, SSRF-safe bounded streaming fetch, sanitized provenance, AC-04 LLM isolation; independent review PASS; full pytest 312; P3.T10 ещё не начата | 🟡 IN_PROGRESS | Нет; следующий шаг P3.T10 |
+| P3 | T9–T10: sources and digest | P3.T9 and P3.T10 DONE; SSRF/injection and durable digest gates passed; independent reviews PASS; full PostgreSQL suite 343 passed; migrations, Ruff, mypy and plan validation clean. | ✅ DONE | Нет |
 | P4 | T11–T12: medical and editorial | Код не создан | ⬜ NOT_STARTED | Gate P3 |
 | P5 | T13: approval/schedule/publication | Код не создан | ⬜ NOT_STARTED | Gate P4; test Telegram channel для live gate |
 | P6 | T14–T16: deletion, costs, health, backup, deploy | Код не создан | ⬜ NOT_STARTED | Gate P5; Beget/S3/age inputs для live gate |
@@ -360,6 +360,9 @@ all gates ───────────────────────�
 
 | UTC date | Task/Phase | Commit | Commands and result | Evidence artifact | Limitations |
 |---|---|---|---|---|---|
+| 2026-09-01T07:29:50Z | P3 | e4afec4+worktree | P3.T9 and P3.T10 DONE; SSRF/injection and durable digest gates passed; independent reviews PASS; full PostgreSQL suite 343 passed; migrations, Ruff, mypy and plan validation clean. | Plan.md | Нет |
+| 2026-09-01T07:29:50Z | P3.T10 | e4afec4+worktree | Commits 6008a20..e4afec4; TDD and four repair rounds; independent final re-review PASS with 0 Critical/Important; controller digest unit/e2e/PostgreSQL 31 passed; full pytest 343 passed in 40.43s; Alembic 0010->0009->0010 and check passed; Ruff clean; strict mypy clean (66 files). | Plan.md | Нет |
+| 2026-08-31T22:14:01Z | P3.T10 start | 29276a0+worktree | P3.T9 review clean и DONE; baseline full pytest 312 passed in 52.50s; Alembic no drift; Ruff/mypy/Plan validator clean; начата TDD-реализация digest dedupe, quality threshold и weekday delivery. | Plan.md | Gate P3 остаётся открыт до завершения P3.T10 |
 | 2026-08-31T22:09:26Z | P3.T9 | 8ff9087+worktree | Commits 86db880..8ff9087; TDD RED missing source boundary, then security/repository regressions including multicast, streaming cutoff, total deadline, delimiter injection and dependent-document FK; four reviewed fix rounds; independent final re-review PASS; controller focused source/security/PostgreSQL 36 passed; full pytest 312 passed in 52.50s; Alembic check no drift; Ruff clean; strict mypy clean (59 files); Plan validator PLAN_OK. | Plan.md | Нет |
 | 2026-08-31T17:56:10Z | P3.T9 start | 41b052c+worktree | Gate P2 подтверждён; plan validator PLAN_OK; после запуска локальной тестовой PostgreSQL baseline full pytest: 276 passed in 33.78s; начата TDD-реализация source registry, SSRF-safe fetch и provenance. | Plan.md | Первый baseline упал только из-за выключенной PostgreSQL; после восстановления повторён полностью и прошёл |
 | 2026-08-30T09:46:04Z | P2 | aa051da+worktree | P2.T8 DONE; owner calibration 8/8, confirmed rules 5/5, holdouts 3/3 accepted, median 5/5, hard style violations 0; trusted immutable report and transactional profile activation verified; independent review PASS; full pytest 276 passed in 39.97s; Alembic/Ruff/mypy clean. | Plan.md | Нет |
