@@ -222,6 +222,40 @@ class ContentWorkflow(OwnedRecord, MutableRecord, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
+class ExtractionConfirmation(OwnedRecord, Base):
+    __tablename__ = "extraction_confirmations"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_extraction_confirmation_id_owner"),
+        UniqueConstraint(
+            "id",
+            "workflow_id",
+            "owner_id",
+            name="uq_extraction_confirmation_workflow_owner",
+        ),
+        UniqueConstraint(
+            "workflow_id", "owner_id", name="uq_extraction_confirmation_current"
+        ),
+        ForeignKeyConstraint(
+            ["workflow_id", "owner_id"],
+            ["content_workflows.id", "content_workflows.owner_id"],
+            name="fk_extraction_confirmation_workflow_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "workflow_version >= 1", name="extraction_confirmation_version_positive"
+        ),
+        CheckConstraint(
+            "extraction_hash ~ '^[0-9a-f]{64}$'",
+            name="extraction_confirmation_hash_sha256",
+        ),
+    )
+
+    workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extraction_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+
+
 class Angle(OwnedRecord, Base):
     __tablename__ = "angles"
     __table_args__ = (
@@ -348,16 +382,63 @@ class Claim(OwnedRecord, MutableRecord, Base):
             name="fk_claim_draft_owner",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["extraction_confirmation_id", "workflow_id", "owner_id"],
+            [
+                "extraction_confirmations.id",
+                "extraction_confirmations.workflow_id",
+                "extraction_confirmations.owner_id",
+            ],
+            name="fk_claim_extraction_confirmation_owner",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "claim_type IN ('effect', 'causal', 'association', 'risk', 'numeric', "
+            "'diagnosis', 'treatment', 'dosage', 'prevention', 'safety')",
+            name="claim_type_known",
+        ),
+        CheckConstraint("char_length(exact_text) <= 3800", name="claim_text_bounded"),
     )
 
     workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     draft_version_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    extraction_confirmation_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
     exact_text: Mapped[str] = mapped_column(Text, nullable=False)
     claim_type: Mapped[str] = mapped_column(String(32), nullable=False)
     population: Mapped[str | None] = mapped_column(Text)
     context: Mapped[str | None] = mapped_column(Text)
+    causality: Mapped[str | None] = mapped_column(Text)
+    numeric_value: Mapped[str | None] = mapped_column(Text)
+    modality: Mapped[str | None] = mapped_column(Text)
     is_medical: Mapped[bool] = mapped_column(Boolean, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class ClaimSourceDocument(OwnedRecord, Base):
+    __tablename__ = "claim_source_documents"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_claim_source_id_owner"),
+        UniqueConstraint(
+            "claim_id",
+            "source_document_id",
+            name="uq_claim_source_document_pair",
+        ),
+        ForeignKeyConstraint(
+            ["claim_id", "owner_id"],
+            ["claims.id", "claims.owner_id"],
+            name="fk_claim_source_claim_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "owner_id"],
+            ["source_documents.id", "source_documents.owner_id"],
+            name="fk_claim_source_document_owner",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    claim_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    source_document_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
 
 
 class Evidence(OwnedRecord, Base):
@@ -386,6 +467,14 @@ class Evidence(OwnedRecord, Base):
         CheckConstraint(
             "char_length(exact_excerpt) <= 65536", name="evidence_excerpt_bounded"
         ),
+        CheckConstraint(
+            "verdict IN ('supported', 'refuted', 'insufficient', "
+            "'manual_required', 'review_incomplete')",
+            name="evidence_verdict_known",
+        ),
+        CheckConstraint(
+            "risk IN ('green', 'yellow', 'red')", name="evidence_risk_known"
+        ),
     )
 
     claim_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
@@ -398,6 +487,56 @@ class Evidence(OwnedRecord, Base):
     limitations: Mapped[str] = mapped_column(Text, nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     review_model_run_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+
+
+class ClaimReviewDecision(OwnedRecord, Base):
+    __tablename__ = "claim_review_decisions"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_claim_review_id_owner"),
+        ForeignKeyConstraint(
+            ["workflow_id", "owner_id"],
+            ["content_workflows.id", "content_workflows.owner_id"],
+            name="fk_claim_review_workflow_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["extraction_confirmation_id", "workflow_id", "owner_id"],
+            [
+                "extraction_confirmations.id",
+                "extraction_confirmations.workflow_id",
+                "extraction_confirmations.owner_id",
+            ],
+            name="fk_claim_review_extraction_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["model_run_id", "owner_id"],
+            ["provider_runs.id", "provider_runs.owner_id"],
+            name="fk_claim_review_model_run_owner",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("workflow_version >= 1", name="claim_review_version_positive"),
+        CheckConstraint(
+            "extraction_hash ~ '^[0-9a-f]{64}$'", name="claim_review_hash_sha256"
+        ),
+        CheckConstraint(
+            "status IN ('passed', 'blocked')", name="claim_review_status_known"
+        ),
+        CheckConstraint(
+            "cardinality(blocking_reasons) <= 64",
+            name="claim_review_blocking_reasons_bounded",
+        ),
+    )
+
+    workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    extraction_confirmation_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extraction_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    blocking_reasons: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_run_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
 
 
 class ReviewDecision(OwnedRecord, Base):
