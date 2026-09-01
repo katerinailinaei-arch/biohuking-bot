@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: E501
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -35,24 +37,28 @@ class FakeRuns:
     claims: list[tuple[int, date]] = field(default_factory=list)
     records: list[tuple[int, date, datetime, bool]] = field(default_factory=list)
 
-    async def claim(self, *, owner_id: int, digest_date: date, now: datetime) -> bool:
+    async def expire_leases(self, *, now: datetime) -> int:
+        return 0
+
+    async def claim(self, *, owner_id: int, digest_date: date, now: datetime):
         self.claims.append((owner_id, digest_date))
         key = (owner_id, digest_date)
         if key in self.claimed:
-            return False
+            return None
         self.claimed.add(key)
+        return SimpleNamespace(attempt_id=uuid4())
+
+    async def mark_delivered(
+        self, *, owner_id: int, digest_date: date, attempt_id, delivered_at: datetime, late: bool
+    ) -> bool:
+        self.records.append((owner_id, digest_date, delivered_at, late))
         return True
 
-    async def delivered(
-        self, *, owner_id: int, digest_date: date, delivered_at: datetime, late: bool
-    ) -> None:
-        self.records.append((owner_id, digest_date, delivered_at, late))
+    async def mark_retryable(self, **kwargs) -> bool:
+        return True
 
-    async def release(self, *, owner_id: int, digest_date: date) -> None:
-        pass
-
-    async def unknown(self, *, owner_id: int, digest_date: date) -> None:
-        pass
+    async def mark_unknown(self, **kwargs) -> bool:
+        return True
 
 
 @dataclass

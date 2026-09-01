@@ -126,3 +126,26 @@ def test_service_rejects_out_of_policy_selection_limits() -> None:
         DigestService(min_score=0.69)
     with pytest.raises(ValueError, match="maximum"):
         DigestService(maximum_cards=6)
+
+
+def test_merged_red_risk_uses_minimum_safety_component_and_worst_label() -> None:
+    green = _candidate(
+        canonical_url="https://example.org/a", preliminary_risk=PreliminaryRisk.GREEN
+    )
+    red = _candidate(
+        canonical_url="https://example.org/b",
+        content_hash="b" * 64,
+        preliminary_risk=PreliminaryRisk.RED,
+    )
+    card = DigestService().build((green, red), digest_date=date(2026, 9, 1)).cards[0]
+    assert card.preliminary_risk is PreliminaryRisk.RED
+    assert card.score_components["preliminary_risk"] == 0.0
+
+
+def test_snapshot_and_card_components_are_deeply_immutable() -> None:
+    snapshot = ScoringSnapshot.default()
+    card = DigestService().build((_candidate(),), digest_date=date(2026, 9, 1)).cards[0]
+    with pytest.raises(TypeError):
+        snapshot.as_dict()["weights"]["relevance"] = 0.1  # type: ignore[index]
+    with pytest.raises(TypeError):
+        card.scoring_snapshot["weights"]["relevance"] = 0.1  # type: ignore[index]

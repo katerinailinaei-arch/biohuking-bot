@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
 from typing import Protocol
+from uuid import UUID
 
 from bodrye_bot.digest.service import Digest, DigestCandidate, DigestService, SourceFailure
 from bodrye_bot.digest.views import render_digest
@@ -20,6 +21,11 @@ class DigestRunStatus(StrEnum):
     DELIVERY_UNKNOWN = "delivery_unknown"
 
 
+@dataclass(frozen=True)
+class DigestRunClaim:
+    attempt_id: UUID
+
+
 class DeliveryOutcome(StrEnum):
     SENT = "sent"
     NOT_SENT = "not_sent"
@@ -33,12 +39,11 @@ class DigestCandidateLoader(Protocol):
 
 
 class DigestRunRepository(Protocol):
-    async def claim(self, *, owner_id: int, digest_date: date, now: datetime) -> bool: ...
-    async def delivered(
-        self, *, owner_id: int, digest_date: date, delivered_at: datetime, late: bool
-    ) -> None: ...
-    async def release(self, *, owner_id: int, digest_date: date) -> None: ...
-    async def unknown(self, *, owner_id: int, digest_date: date) -> None: ...
+    async def expire_leases(self, *, now: datetime) -> int: ...
+    async def claim(self, *, owner_id: int, digest_date: date, now: datetime) -> DigestRunClaim | None: ...
+    async def mark_delivered(self, *, owner_id: int, digest_date: date, attempt_id: UUID, delivered_at: datetime, late: bool) -> bool: ...
+    async def mark_retryable(self, *, owner_id: int, digest_date: date, attempt_id: UUID) -> bool: ...
+    async def mark_unknown(self, *, owner_id: int, digest_date: date, attempt_id: UUID) -> bool: ...
 
 
 class TelegramDigestPort(Protocol):
@@ -80,11 +85,14 @@ class DigestWorker:
         if now.tzinfo is None:
             raise ValueError("Digest worker requires timezone-aware time")
         moscow = now.astimezone(MOSCOW)
+        await self._runs.expire_leases(now=now)
         if moscow.weekday() >= 5 or moscow.time() < _DUE:
             return None
         digest_date = moscow.date()
-        if not await self._runs.claim(owner_id=self._owner_id, digest_date=digest_date, now=now):
+        claim = await self._runs.claim(owner_id=self._owner_id, digest_date=digest_date, now=now)
+        if claim is None:
             return None
+        attempt_id = claim.attempt_id
         try:
             candidates, failures = await self._loader.load(
                 owner_id=self._owner_id, digest_date=digest_date
@@ -93,27 +101,27 @@ class DigestWorker:
                 candidates, digest_date=digest_date, source_failures=failures
             )
         except Exception:
-            await self._runs.release(owner_id=self._owner_id, digest_date=digest_date)
+            await self._runs.mark_retryable(owner_id=self._owner_id, digest_date=digest_date, attempt_id=attempt_id)
             raise
         try:
             outcome = await self._telegram.deliver(
                 owner_id=self._owner_id, text=render_digest(digest)
             )
         except Exception:
-            await self._runs.unknown(owner_id=self._owner_id, digest_date=digest_date)
+            await self._runs.mark_unknown(owner_id=self._owner_id, digest_date=digest_date, attempt_id=attempt_id)
             raise
         if outcome is DeliveryOutcome.NOT_SENT:
-            await self._runs.release(owner_id=self._owner_id, digest_date=digest_date)
+            await self._runs.mark_retryable(owner_id=self._owner_id, digest_date=digest_date, attempt_id=attempt_id)
             return None
         if outcome is not DeliveryOutcome.SENT:
-            await self._runs.unknown(owner_id=self._owner_id, digest_date=digest_date)
+            await self._runs.mark_unknown(owner_id=self._owner_id, digest_date=digest_date, attempt_id=attempt_id)
             return None
         delivered_at = self._clock.now()
         if delivered_at.tzinfo is None:
             raise ValueError("Digest clock requires timezone-aware time")
         late = delivered_at.astimezone(MOSCOW).time() > _LATE
-        await self._runs.delivered(
-            owner_id=self._owner_id, digest_date=digest_date, delivered_at=delivered_at, late=late
+        await self._runs.mark_delivered(
+            owner_id=self._owner_id, digest_date=digest_date, attempt_id=attempt_id, delivered_at=delivered_at, late=late
         )
         return DigestDelivery(digest, delivered_at, late)
 
@@ -124,6 +132,7 @@ __all__ = [
     "DigestCandidateLoader",
     "DigestDelivery",
     "DigestRunRepository",
+    "DigestRunClaim",
     "DigestRunStatus",
     "DigestWorker",
     "MOSCOW",

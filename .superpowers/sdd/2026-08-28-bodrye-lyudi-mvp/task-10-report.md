@@ -92,3 +92,30 @@ Commit message: `feat: deliver quality-gated morning digest` (final hash is reco
 ### Remaining boundary
 
 The production composition root has not yet been created in the scaffold, so `SqlAlchemyDigestRunRepository` is exposed through `SqlAlchemyUnitOfWork.digest_runs` for the future worker composition. No live Telegram/source/LLM behavior was introduced.
+
+## Review round 2 — durable attempt fencing
+
+### RED/GREEN evidence
+
+- RED: new focused tests failed collection with the expected missing `SqlAlchemyDigestRunStore` import. They specified committed claim recovery, expired lease → `delivery_unknown`, retry token rotation, and stale-token rejection.
+- GREEN: `TEST_DATABASE_URL=... python -m pytest tests/integration/test_digest_run_store.py tests/unit/digest tests/e2e/test_digest_delivery.py -q` returned `24 passed in 2.43s`.
+- Migration: `DATABASE_URL=... python -m alembic downgrade 0009_digest_runs; python -m alembic upgrade head` completed the `0010 → 0009 → 0010` round-trip.
+- Full PostgreSQL suite: `338 passed in 40.45s`.
+
+### Changes
+
+- Added immutable `attempt_id` to `DigestRun` in new migration `0010_digest_run_attempt`; applied `0009` was not edited.
+- Added `SqlAlchemyDigestRunStore`, whose `claim`, lease sweep and terminal lifecycle methods each own `session_factory.begin()` and therefore commit before or after Telegram I/O. `claim` rotates the token for a durable retry, while every terminal state write is fenced by owner/date/processing/attempt_id.
+- Lease sweeps operate on every overdue `processing` row, including previous dates, and turn it into durable `delivery_unknown`; it cannot silently retry.
+- Worker now sweeps before due evaluation and passes the durable attempt token to retryable/unknown/delivered writes. Actual injected-clock completion time remains the source of late status.
+- Merged-card safety uses the minimum risk-safety component across all provenance while showing the worst risk label. Snapshot weights and card snapshots are recursively immutable at the exposed weights/components boundary. Representative tie-breaking covers all owner-visible candidate fields.
+
+### Verification
+
+| Command | Fresh result |
+| --- | --- |
+| `python -m ruff check .` | All checks passed |
+| `python -m mypy src evals` | Success: no issues found in 66 source files |
+| `git diff --check` | passed |
+| PostgreSQL focused digest | 24 passed in 2.43s |
+| PostgreSQL full suite | 338 passed in 40.45s |

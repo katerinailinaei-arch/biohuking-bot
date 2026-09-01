@@ -69,18 +69,29 @@ class ScoringSnapshot:
     def default(cls) -> ScoringSnapshot:
         return cls()
 
-    def as_dict(self) -> dict[str, object]:
-        return {
+    def as_dict(self) -> Mapping[str, object]:
+        return MappingProxyType({
             "version": self.version,
-            "weights": dict(sorted(self.weights.items())),
+            "weights": MappingProxyType(dict(sorted(self.weights.items()))),
             "min_score": self.min_score,
             "maximum_cards": self.maximum_cards,
             "aggregation": self.aggregation,
-        }
+        })
 
     @property
     def id(self) -> str:
-        canonical = dumps(self.as_dict(), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        canonical = dumps(
+            {
+                "version": self.version,
+                "weights": dict(sorted(self.weights.items())),
+                "min_score": self.min_score,
+                "maximum_cards": self.maximum_cards,
+                "aggregation": self.aggregation,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         return f"{self.version}:{sha256(canonical.encode()).hexdigest()[:16]}"
 
 
@@ -224,11 +235,16 @@ class DigestService:
         )
 
     def _card(self, group: tuple[DigestCandidate, ...]) -> DigestCard:
-        values = {name: max(item.signal_values()[name] for item in group) for name in _DIMENSIONS}
+        values = {
+            name: (
+                min(item.signal_values()[name] for item in group)
+                if name == "preliminary_risk"
+                else max(item.signal_values()[name] for item in group)
+            )
+            for name in _DIMENSIONS
+        }
         raw = sum(self._snapshot.weights[name] * values[name] for name in _DIMENSIONS)
-        rep = min(
-            group, key=lambda item: (_url(item.canonical_url), item.title, item.topic_fingerprint)
-        )
+        rep = min(group, key=_representative_key)
         return DigestCard(
             rep.title,
             rep.topic_fingerprint,
@@ -290,6 +306,26 @@ def _keys(item: DigestCandidate) -> tuple[tuple[str, str], ...]:
     if topic:
         result.append(("topic", topic))
     return tuple(result)
+
+
+def _representative_key(item: DigestCandidate) -> tuple[object, ...]:
+    return (
+        _url(item.canonical_url),
+        item.title,
+        item.topic_fingerprint,
+        item.summary,
+        item.rubric,
+        item.audience_reason,
+        item.published_at,
+        item.content_hash or "",
+        tuple(sorted(str(role) for role in item.source_roles)),
+        item.relevance,
+        item.freshness,
+        item.source_authority,
+        item.audience_fit,
+        item.novelty,
+        item.preliminary_risk.value,
+    )
 
 
 def _url(url: str) -> str:

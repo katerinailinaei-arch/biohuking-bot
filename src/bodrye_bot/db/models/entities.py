@@ -181,6 +181,7 @@ class DigestRun(OwnedRecord, MutableRecord, Base):
     )
 
     digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    attempt_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP)
     delivered_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
