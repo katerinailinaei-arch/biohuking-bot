@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from bodrye_bot.domain.medical import ClaimType, RiskLevel
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -24,13 +26,30 @@ class ExtractRequest(RequestContext):
     source_text: str = Field(min_length=1, repr=False)
 
 
+class MedicalClaimInput(StrictModel):
+    claim_id: UUID
+    exact_text: str = Field(min_length=1, max_length=3_800, repr=False)
+    claim_type: ClaimType
+    population: str | None = Field(max_length=2_000, repr=False)
+    context: str | None = Field(max_length=2_000, repr=False)
+    causality: str | None = Field(max_length=2_000, repr=False)
+    numeric_value: str | None = Field(max_length=2_000, repr=False)
+    modality: str | None = Field(max_length=2_000, repr=False)
+    medical_uncertainty: bool
+
+
+class EvidenceFragment(StrictModel):
+    source_document_id: UUID
+    exact_excerpt: str = Field(min_length=1, max_length=65_536, repr=False)
+
+
 class ClaimsRequest(RequestContext):
-    claims: tuple[str, ...] = Field(repr=False)
+    claims: tuple[MedicalClaimInput, ...] = Field(repr=False)
 
 
 class EvidenceRequest(RequestContext):
-    claim: str = Field(repr=False)
-    evidence_fragments: tuple[str, ...] = Field(repr=False)
+    claim: MedicalClaimInput = Field(repr=False)
+    evidence_fragment: EvidenceFragment = Field(repr=False)
 
 
 class AnglesRequest(RequestContext):
@@ -77,9 +96,18 @@ class ClaimVerdict(StrEnum):
 
 
 class ClaimClassification(StrictModel):
-    exact_text: str
+    claim_id: UUID
+    exact_text: str = Field(min_length=1, max_length=3_800, repr=False)
+    claim_type: ClaimType
+    population: str | None = Field(max_length=2_000, repr=False)
+    context: str | None = Field(max_length=2_000, repr=False)
+    causality: str | None = Field(max_length=2_000, repr=False)
+    numeric_value: str | None = Field(max_length=2_000, repr=False)
+    modality: str | None = Field(max_length=2_000, repr=False)
+    medical_uncertainty: bool
+    risk: RiskLevel
     verdict: ClaimVerdict
-    rationale: str
+    rationale: str = Field(min_length=1, max_length=4_000, repr=False)
 
 
 class ClaimsResponse(StrictModel):
@@ -89,7 +117,20 @@ class ClaimsResponse(StrictModel):
 
 class EvidenceResponse(StrictModel):
     response_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    synthesis: str
+    claim_id: UUID
+    source_document_id: UUID
+    exact_text: str = Field(min_length=1, max_length=3_800, repr=False)
+    claim_type: ClaimType
+    population: str | None = Field(max_length=2_000, repr=False)
+    context: str | None = Field(max_length=2_000, repr=False)
+    causality: str | None = Field(max_length=2_000, repr=False)
+    numeric_value: str | None = Field(max_length=2_000, repr=False)
+    modality: str | None = Field(max_length=2_000, repr=False)
+    medical_uncertainty: bool
+    applicability: str = Field(min_length=1, max_length=4_000, repr=False)
+    limitations: str = Field(min_length=1, max_length=4_000, repr=False)
+    risk: RiskLevel
+    synthesis: str = Field(min_length=1, max_length=8_000, repr=False)
     verdict: ClaimVerdict
 
 
@@ -231,11 +272,13 @@ __all__ = [
     "DraftResponse",
     "EvidenceRequest",
     "EvidenceResponse",
+    "EvidenceFragment",
     "ExtractRequest",
     "ExtractResponse",
     "Jitter",
     "LLMProvider",
     "LLMTransport",
+    "MedicalClaimInput",
     "ProviderHealth",
     "Provenance",
     "Sleep",

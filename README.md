@@ -4,7 +4,7 @@
 
 ## Текущее состояние
 
-Реализация идёт по [Plan.md](Plan.md). Созданы Python 3.12 application scaffold, owner-only Telegram shell, provider-neutral LLM boundary, офлайн eval gate, безопасный digest и сохраняемый claim-level medical gate. Полный worker появляется в следующих задачах плана.
+Реализация идёт по [Plan.md](Plan.md). Созданы Python 3.12 application scaffold, owner-only Telegram shell, provider-neutral LLM boundary, офлайн eval gate, безопасный digest и версионированный claim-level medical gate с durable attempt fencing, строгой evidence provenance и привязкой решения к фактическим provider responses. Полный worker появляется в следующих задачах плана.
 
 ## Локальная установка
 

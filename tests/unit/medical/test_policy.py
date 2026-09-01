@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -13,13 +13,14 @@ from bodrye_bot.domain.medical import (
     ClaimReview,
     ClaimType,
     ConfirmedExtraction,
+    DraftBinding,
     Evidence,
     EvidenceSource,
     EvidenceVerdict,
     ReviewBlockingReason,
     RiskLevel,
 )
-from bodrye_bot.medical.policy import MedicalPolicy
+from bodrye_bot.medical.policy import MedicalPolicy, MedicalReviewConfiguration
 
 NOW = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 OWNER_ID = 42
@@ -50,6 +51,7 @@ def claim_review(
         causality="Улучшает",
         numeric_value=None,
         modality="Может",
+        medical_uncertainty=False,
         source_document_ids=(source_document_id,),
     )
     evidence = ()
@@ -68,6 +70,7 @@ def claim_review(
                 risk=risk,
                 reviewed_at=NOW,
                 model_run_id=MODEL_RUN_ID,
+                response_id="2" * 32,
             ),
         )
     return ClaimReview(
@@ -78,8 +81,10 @@ def claim_review(
         extraction_hash=content_hash("confirmed extraction v7"),
         draft_version_id=DRAFT_VERSION_ID,
         draft_hash=DRAFT_HASH,
-        policy_version="medical-v1",
-        model_run_id=MODEL_RUN_ID,
+        policy_version="medical-v1:ttl=86400",
+        validity_seconds=86_400,
+        classification_run_id=MODEL_RUN_ID,
+        classification_response_id="1" * 32,
         reviewed_at=NOW,
         claims=(claim,),
         evidence=evidence,
@@ -88,8 +93,25 @@ def claim_review(
 
 def policy() -> MedicalPolicy:
     return MedicalPolicy(
-        policy_version="medical-v1",
-        active_model_run_id=MODEL_RUN_ID,
+        MedicalReviewConfiguration(
+            policy_version="medical-v1:ttl=86400",
+            provider="fake",
+            model="offline",
+            claims_prompt_version="claims-v2",
+            claims_schema_version="claims-v2",
+            evidence_prompt_version="evidence-v2",
+            evidence_schema_version="evidence-v2",
+            validity_interval=timedelta(hours=24),
+        )
+    )
+
+
+def draft_binding(*, content: str = DRAFT_HASH) -> DraftBinding:
+    return DraftBinding(
+        owner_id=OWNER_ID,
+        workflow_id=WORKFLOW_ID,
+        draft_version_id=DRAFT_VERSION_ID,
+        content_hash=content,
     )
 
 
@@ -134,8 +156,7 @@ def test_confirmed_extraction_rejects_hash_not_derived_from_exact_payload() -> N
         url="https://www.who.int/example",
         exact_excerpt=excerpt,
         excerpt_hash=content_hash(excerpt),
-        applicability="Взрослые старше 35 лет",
-        limitations="Общая рекомендация.",
+        catalog_version="source-registry-v1",
     )
 
     with pytest.raises(SafeError) as caught:
@@ -199,7 +220,7 @@ def test_unsafe_or_incomplete_claim_blocks_approval(
         has_provenance=has_provenance,
     )
 
-    decision = policy().can_approve(review, review.draft_hash)
+    decision = policy().can_approve(review, draft_binding(), now=NOW)
 
     assert decision.allowed is False
     assert reason in decision.reasons
@@ -213,8 +234,8 @@ def test_unsafe_or_incomplete_claim_blocks_approval(
             ReviewBlockingReason.STALE_POLICY,
         ),
         (
-            replace(claim_review(), model_run_id=uuid4()),
-            ReviewBlockingReason.STALE_MODEL_RUN,
+            replace(claim_review(), validity_seconds=3_600),
+            ReviewBlockingReason.STALE_POLICY,
         ),
         (
             claim_review(exact_excerpt=""),
@@ -229,7 +250,7 @@ def test_unsafe_or_incomplete_claim_blocks_approval(
 def test_provenance_and_freshness_are_derived_from_bound_values(
     review: ClaimReview, reason: ReviewBlockingReason
 ) -> None:
-    decision = policy().can_draft(review)
+    decision = policy().can_draft(review, now=NOW)
 
     assert decision.allowed is False
     assert reason in decision.reasons
@@ -238,7 +259,7 @@ def test_provenance_and_freshness_are_derived_from_bound_values(
 def test_unknown_high_risk_applicability_blocks_downstream() -> None:
     review = claim_review(risk=RiskLevel.YELLOW, applicability="unknown")
 
-    decision = policy().can_draft(review)
+    decision = policy().can_draft(review, now=NOW)
 
     assert decision.allowed is False
     assert ReviewBlockingReason.UNKNOWN_HIGH_RISK_APPLICABILITY in decision.reasons
@@ -286,7 +307,7 @@ def test_unknown_high_risk_applicability_blocks_downstream() -> None:
 def test_missing_required_claim_or_evidence_field_blocks_review(
     review: ClaimReview,
 ) -> None:
-    decision = policy().can_draft(review)
+    decision = policy().can_draft(review, now=NOW)
 
     assert decision.allowed is False
     assert ReviewBlockingReason.REVIEW_INCOMPLETE in decision.reasons
@@ -295,7 +316,11 @@ def test_missing_required_claim_or_evidence_field_blocks_review(
 def test_approval_requires_exact_draft_hash_binding() -> None:
     review = claim_review()
 
-    decision = policy().can_approve(review, content_hash("Подменённый черновик"))
+    decision = policy().can_approve(
+        review,
+        draft_binding(content=content_hash("Подменённый черновик")),
+        now=NOW,
+    )
 
     assert decision.allowed is False
     assert ReviewBlockingReason.DRAFT_HASH_MISMATCH in decision.reasons
@@ -310,7 +335,7 @@ def test_evidence_from_unconfirmed_claim_source_blocks_downstream() -> None:
         ),
     )
 
-    decision = policy().can_draft(contaminated)
+    decision = policy().can_draft(contaminated, now=NOW)
 
     assert decision.allowed is False
     assert ReviewBlockingReason.EXTRACTION_BINDING_MISMATCH in decision.reasons
@@ -319,8 +344,8 @@ def test_evidence_from_unconfirmed_claim_source_blocks_downstream() -> None:
 def test_supported_current_review_can_draft_and_approve_exact_version() -> None:
     review = claim_review()
 
-    assert policy().can_draft(review).allowed is True
-    assert policy().can_approve(review, DRAFT_HASH).allowed is True
+    assert policy().can_draft(review, now=NOW).allowed is True
+    assert policy().can_approve(review, draft_binding(), now=NOW).allowed is True
 
 
 def test_medical_repr_does_not_disclose_claim_or_evidence_text() -> None:

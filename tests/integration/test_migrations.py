@@ -37,6 +37,7 @@ REQUIRED_TABLES = {
     "evidence",
     "extraction_confirmations",
     "library_items",
+    "medical_review_attempts",
     "provider_runs",
     "publication_jobs",
     "review_decisions",
@@ -200,6 +201,84 @@ def test_upgrade_downgrade_upgrade_round_trip() -> None:
     command.upgrade(config, "head")
     tables_after_second_upgrade, _ = _snapshot()
     assert tables_after_second_upgrade - {"alembic_version"} == REQUIRED_TABLES
+
+
+def test_0011_downgrade_restores_the_0010_schema() -> None:
+    config = _alembic_config()
+    command.upgrade(config, "head")
+    try:
+        command.downgrade(config, "0010_digest_run_attempt")
+        tables, columns = _snapshot()
+        assert "medical_review_attempts" not in tables
+        assert "extraction_confirmations" not in tables
+        assert "claim_review_decisions" not in tables
+        assert "medical_uncertainty" not in columns["claims"]
+        assert "medical_attempt_id" not in columns["provider_runs"]
+        assert "response_id" not in columns["provider_runs"]
+        assert "review_decision_id" not in columns["evidence"]
+        assert "response_id" not in columns["evidence"]
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_0011_preflight_rejects_unknown_legacy_claim_type_with_explicit_error() -> None:
+    assert TEST_DATABASE_URL is not None
+    config = _alembic_config()
+    workflow_id = str(uuid4())
+    claim_id = str(uuid4())
+    command.downgrade(config, "0010_digest_run_attempt")
+    try:
+        async def seed() -> None:
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text(
+                            "INSERT INTO content_workflows "
+                            "(id, owner_id, created_at, updated_at, origin_type, status, "
+                            "recommended_format, version) VALUES "
+                            "(:workflow_id, 4242, now(), now(), 'manual_text', "
+                            "'extracted', 'medium', 1)"
+                        ),
+                        {"workflow_id": workflow_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO claims "
+                            "(id, owner_id, created_at, updated_at, workflow_id, exact_text, "
+                            "claim_type, is_medical, status) VALUES "
+                            "(:claim_id, 4242, now(), now(), :workflow_id, 'Legacy', "
+                            "'legacy_unknown', true, 'pending')"
+                        ),
+                        {"claim_id": claim_id, "workflow_id": workflow_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(seed())
+        with pytest.raises(
+            Exception,
+            match="medical migration preflight failed: unknown claims.claim_type",
+        ):
+            command.upgrade(config, "head")
+    finally:
+        async def cleanup() -> None:
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+            try:
+                async with engine.begin() as connection:
+                    await connection.execute(
+                        text("DELETE FROM claims WHERE id = :claim_id"),
+                        {"claim_id": claim_id},
+                    )
+                    await connection.execute(
+                        text("DELETE FROM content_workflows WHERE id = :workflow_id"),
+                        {"workflow_id": workflow_id},
+                    )
+            finally:
+                await engine.dispose()
+
+        asyncio.run(cleanup())
+        command.upgrade(config, "head")
 
 
 def test_alembic_preserves_existing_application_logger() -> None:

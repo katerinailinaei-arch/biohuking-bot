@@ -194,7 +194,12 @@ def _parse_case(value: object, line_number: int) -> EvalCase:
         raise DatasetValidationError(f"line {line_number} hard_assertions must be unique")
 
     expected_schema = _required_string(value["expected_schema"], "expected_schema", line_number)
-    if expected_schema not in {"claims-v1", "evidence-v1", "change-v1", "draft-v1"}:
+    if expected_schema not in {
+        "claims-medical-v2",
+        "evidence-medical-v2",
+        "change-v1",
+        "draft-v1",
+    }:
         raise DatasetValidationError(f"line {line_number} has invalid expected schema")
 
     return EvalCase(

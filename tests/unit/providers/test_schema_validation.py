@@ -6,7 +6,12 @@ from pydantic import ValidationError
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
 from bodrye_bot.ports.llm import ClaimsRequest, ExtractRequest, TransportResponse
 from bodrye_bot.providers.groq import GroqProvider
-from tests.contract.test_llm_contract import FakeTransport, extract_request, valid_extract_payload
+from tests.contract.test_llm_contract import (
+    MEDICAL_CLAIM,
+    FakeTransport,
+    extract_request,
+    valid_extract_payload,
+)
 
 
 def test_request_models_forbid_extra_fields_and_are_immutable():
@@ -96,7 +101,7 @@ async def test_manual_review_marker_in_invalid_output_never_enters_repair():
         workflow_id=None,
         prompt_version="claims-v1",
         schema_version="claims-v1",
-        claims=("Спорный claim.",),
+        claims=(MEDICAL_CLAIM,),
     )
     provider = GroqProvider(transport=transport, model="openai/gpt-oss-120b")
 

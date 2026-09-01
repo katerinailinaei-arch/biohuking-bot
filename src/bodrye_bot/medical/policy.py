@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from uuid import UUID
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from bodrye_bot.domain.medical import (
     ClaimReview,
     ClaimType,
+    DraftBinding,
     EvidenceVerdict,
     MedicalDecision,
     ReviewBlockingReason,
@@ -14,19 +16,59 @@ from bodrye_bot.domain.medical import (
 _UNKNOWN_APPLICABILITY = {"", "unknown", "неизвестно", "не указано"}
 
 
-class MedicalPolicy:
-    def __init__(self, *, policy_version: str, active_model_run_id: UUID) -> None:
-        if not policy_version or len(policy_version) > 64:
-            raise ValueError("policy_version must be 1..64 characters")
-        self.policy_version = policy_version
-        self.active_model_run_id = active_model_run_id
+@dataclass(frozen=True)
+class MedicalReviewConfiguration:
+    policy_version: str
+    provider: str
+    model: str
+    claims_prompt_version: str
+    claims_schema_version: str
+    evidence_prompt_version: str
+    evidence_schema_version: str
+    validity_interval: timedelta
 
-    def can_draft(self, review: ClaimReview) -> MedicalDecision:
+    def __post_init__(self) -> None:
+        values = (
+            self.policy_version,
+            self.provider,
+            self.model,
+            self.claims_prompt_version,
+            self.claims_schema_version,
+            self.evidence_prompt_version,
+            self.evidence_schema_version,
+        )
+        if any(not value or len(value) > 255 for value in values):
+            raise ValueError("medical review configuration is incomplete")
+        seconds = self.validity_seconds
+        if seconds < 1 or seconds > 604_800:
+            raise ValueError("medical review validity must be 1..604800 seconds")
+        if f"ttl={seconds}" not in self.policy_version:
+            raise ValueError("policy_version must bind the validity interval")
+
+    @property
+    def validity_seconds(self) -> int:
+        return int(self.validity_interval.total_seconds())
+
+
+class MedicalPolicy:
+    def __init__(self, configuration: MedicalReviewConfiguration) -> None:
+        self.configuration = configuration
+
+    @property
+    def policy_version(self) -> str:
+        return self.configuration.policy_version
+
+    def can_draft(self, review: ClaimReview, *, now: datetime) -> MedicalDecision:
         reasons: list[ReviewBlockingReason] = []
-        if review.policy_version != self.policy_version:
+        config = self.configuration
+        if review.policy_version != config.policy_version:
             reasons.append(ReviewBlockingReason.STALE_POLICY)
-        if review.model_run_id != self.active_model_run_id:
-            reasons.append(ReviewBlockingReason.STALE_MODEL_RUN)
+        if review.validity_seconds != config.validity_seconds:
+            reasons.append(ReviewBlockingReason.STALE_POLICY)
+        if review.reviewed_at > now:
+            reasons.append(ReviewBlockingReason.REVIEW_IN_FUTURE)
+        elif now - review.reviewed_at > config.validity_interval:
+            reasons.append(ReviewBlockingReason.REVIEW_EXPIRED)
         if not review.claims:
             reasons.append(ReviewBlockingReason.REVIEW_INCOMPLETE)
 
@@ -39,19 +81,23 @@ class MedicalPolicy:
             reasons.append(ReviewBlockingReason.EXTRACTION_BINDING_MISMATCH)
 
         for claim in review.claims:
-            if not _claim_shape_complete(claim):
+            if not _claim_shape_complete(claim) or claim.medical_uncertainty:
                 reasons.append(ReviewBlockingReason.REVIEW_INCOMPLETE)
             items = evidence_by_claim[claim.id]
             if not items:
                 reasons.append(ReviewBlockingReason.MISSING_PROVENANCE)
                 continue
+            if {item.source_document_id for item in items} != set(
+                claim.source_document_ids
+            ):
+                reasons.append(ReviewBlockingReason.EXTRACTION_BINDING_MISMATCH)
             for item in items:
-                if item.source_document_id not in claim.source_document_ids:
-                    reasons.append(ReviewBlockingReason.EXTRACTION_BINDING_MISMATCH)
-                if item.model_run_id != review.model_run_id:
-                    reasons.append(ReviewBlockingReason.STALE_MODEL_RUN)
                 if item.reviewed_at != review.reviewed_at:
                     reasons.append(ReviewBlockingReason.REVIEW_INCOMPLETE)
+                if item.reviewed_at > now:
+                    reasons.append(ReviewBlockingReason.REVIEW_IN_FUTURE)
+                elif now - item.reviewed_at > config.validity_interval:
+                    reasons.append(ReviewBlockingReason.REVIEW_EXPIRED)
                 if not item.exact_excerpt.strip():
                     reasons.append(ReviewBlockingReason.MISSING_EXACT_EXCERPT)
                 if not _valid_source_url(item.source_url):
@@ -64,9 +110,7 @@ class MedicalPolicy:
                     item.risk in {RiskLevel.YELLOW, RiskLevel.RED}
                     and item.applicability.strip().casefold() in _UNKNOWN_APPLICABILITY
                 ):
-                    reasons.append(
-                        ReviewBlockingReason.UNKNOWN_HIGH_RISK_APPLICABILITY
-                    )
+                    reasons.append(ReviewBlockingReason.UNKNOWN_HIGH_RISK_APPLICABILITY)
                 verdict_reason = _verdict_reason(item.verdict)
                 if verdict_reason is not None:
                     reasons.append(verdict_reason)
@@ -75,12 +119,21 @@ class MedicalPolicy:
         return MedicalDecision(allowed=not unique_reasons, reasons=unique_reasons)
 
     def can_approve(
-        self, review: ClaimReview, draft_hash: str | None
+        self,
+        review: ClaimReview,
+        draft: DraftBinding,
+        *,
+        now: datetime,
     ) -> MedicalDecision:
-        reasons = list(self.can_draft(review).reasons)
-        if review.draft_version_id is None:
+        reasons = list(self.can_draft(review, now=now).reasons)
+        if (
+            draft.owner_id != review.owner_id
+            or draft.workflow_id != review.workflow_id
+            or review.draft_version_id is None
+            or review.draft_version_id != draft.draft_version_id
+        ):
             reasons.append(ReviewBlockingReason.DRAFT_VERSION_MISMATCH)
-        if review.draft_hash is None or review.draft_hash != draft_hash:
+        if review.draft_hash is None or review.draft_hash != draft.content_hash:
             reasons.append(ReviewBlockingReason.DRAFT_HASH_MISMATCH)
         unique_reasons = tuple(dict.fromkeys(reasons))
         return MedicalDecision(allowed=not unique_reasons, reasons=unique_reasons)
@@ -115,4 +168,4 @@ def _verdict_reason(verdict: EvidenceVerdict) -> ReviewBlockingReason | None:
     }[verdict]
 
 
-__all__ = ["MedicalPolicy"]
+__all__ = ["MedicalPolicy", "MedicalReviewConfiguration"]

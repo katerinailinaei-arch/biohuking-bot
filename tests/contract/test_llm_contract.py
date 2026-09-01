@@ -9,13 +9,16 @@ from uuid import UUID
 import pytest
 from pydantic import SecretStr
 
+from bodrye_bot.domain.medical import ClaimType, RiskLevel
 from bodrye_bot.ports.llm import (
     AnglesRequest,
     ChangeRequest,
     ClaimsRequest,
     DraftRequest,
+    EvidenceFragment,
     EvidenceRequest,
     ExtractRequest,
+    MedicalClaimInput,
     StyleInferenceRequest,
     TransportRequest,
     TransportResponse,
@@ -77,6 +80,40 @@ def openai_factory(transport: FakeTransport) -> OpenAIProvider:
     )
 
 
+MEDICAL_CLAIM = MedicalClaimInput(
+    claim_id=UUID("00000000-0000-0000-0000-000000000456"),
+    exact_text="Сон важен.",
+    claim_type=ClaimType.EFFECT,
+    population="Взрослые",
+    context="Регулярный сон",
+    causality="Может поддерживать",
+    numeric_value=None,
+    modality="Может",
+    medical_uncertainty=False,
+)
+
+
+def medical_claim_payload() -> dict[str, object]:
+    return {
+        **MEDICAL_CLAIM.model_dump(mode="json"),
+        "risk": RiskLevel.GREEN.value,
+        "verdict": "supported",
+        "rationale": "Есть evidence.",
+    }
+
+
+def medical_evidence_payload() -> dict[str, object]:
+    return {
+        **MEDICAL_CLAIM.model_dump(mode="json"),
+        "source_document_id": "00000000-0000-0000-0000-000000000789",
+        "applicability": "Взрослые",
+        "limitations": "Общие данные.",
+        "risk": RiskLevel.GREEN.value,
+        "synthesis": "Подтверждено источником.",
+        "verdict": "supported",
+    }
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_factory", [groq_factory, openai_factory])
 @pytest.mark.parametrize(
@@ -90,26 +127,10 @@ def openai_factory(transport: FakeTransport) -> OpenAIProvider:
                 workflow_id=None,
                 prompt_version="claims-v1",
                 schema_version="claims-schema-v1",
-                claims=("Сон важен.",),
+                claims=(MEDICAL_CLAIM,),
             ),
-            {
-                "claims": [
-                    {
-                        "exact_text": "Сон важен.",
-                        "verdict": "supported",
-                        "rationale": "Есть evidence.",
-                    }
-                ]
-            },
-            {
-                "claims": [
-                    {
-                        "exact_text": "Сон важен.",
-                        "verdict": "supported",
-                        "rationale": "Есть evidence.",
-                    }
-                ]
-            },
+            {"claims": [medical_claim_payload()]},
+            {"claims": [medical_claim_payload()]},
         ),
         (
             "synthesize_evidence",
@@ -118,11 +139,14 @@ def openai_factory(transport: FakeTransport) -> OpenAIProvider:
                 workflow_id=None,
                 prompt_version="evidence-v1",
                 schema_version="evidence-schema-v1",
-                claim="Сон важен.",
-                evidence_fragments=("Фрагмент.",),
+                claim=MEDICAL_CLAIM,
+                evidence_fragment=EvidenceFragment(
+                    source_document_id=UUID("00000000-0000-0000-0000-000000000789"),
+                    exact_excerpt="Фрагмент.",
+                ),
             ),
-            {"synthesis": "Подтверждено источником.", "verdict": "supported"},
-            {"synthesis": "Подтверждено источником.", "verdict": "supported"},
+            medical_evidence_payload(),
+            medical_evidence_payload(),
         ),
         (
             "propose_angles",

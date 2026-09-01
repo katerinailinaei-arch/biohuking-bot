@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from bodrye_bot.domain.medical import RiskLevel
 from bodrye_bot.operations.model_activation import ActivationGate
 from bodrye_bot.ports.llm import (
     ChangeAssessment,
@@ -165,17 +166,28 @@ async def test_fake_eval_report_is_deterministic_and_preserves_unknown_usage() -
 
 class _TypedProvider:
     async def classify_claims(self, request: Any) -> ClaimsResponse:
-        verdict = ClaimVerdict(request.claims[0])
+        claim = request.claims[0]
+        verdict = ClaimVerdict(claim.exact_text)
         return ClaimsResponse(
             response_id="1" * 32,
             claims=(
-                ClaimClassification(exact_text=request.claims[0], verdict=verdict, rationale="ok"),
+                ClaimClassification(
+                    **claim.model_dump(),
+                    risk=RiskLevel.GREEN,
+                    verdict=verdict,
+                    rationale="ok",
+                ),
             ),
         )
 
     async def synthesize_evidence(self, request: Any) -> EvidenceResponse:
         return EvidenceResponse(
             response_id="2" * 32,
+            **request.claim.model_dump(),
+            source_document_id=request.evidence_fragment.source_document_id,
+            applicability="Взрослые",
+            limitations="Нужна ручная проверка.",
+            risk=RiskLevel.YELLOW,
             synthesis="Нужна ручная проверка.",
             verdict=ClaimVerdict.MANUAL_REVIEW,
         )
@@ -216,7 +228,7 @@ async def test_llm_provider_adapter_evaluates_typed_outputs_and_usage() -> None:
             id="supported",
             category="calibration",
             input=MappingProxyType({"topic": "a", "text": "supported"}),
-            expected_schema="claims-v1",
+            expected_schema="claims-medical-v2",
             hard_assertions=("claim_supported",),
             blind_label="B1",
         ),
@@ -224,7 +236,7 @@ async def test_llm_provider_adapter_evaluates_typed_outputs_and_usage() -> None:
             id="unavailable",
             category="calibration",
             input=MappingProxyType({"topic": "b", "text": "unavailable"}),
-            expected_schema="evidence-v1",
+            expected_schema="evidence-medical-v2",
             hard_assertions=("claim_manual_review", "source_unavailable"),
             blind_label="B2",
         ),
@@ -393,7 +405,7 @@ def test_gate_constructor_cannot_silently_omit_style_or_duplicate_metadata() -> 
         id="same",
         category="calibration",
         input=MappingProxyType({"topic": "a", "text": "a"}),
-        expected_schema="claims-v1",
+        expected_schema="claims-medical-v2",
         hard_assertions=(),
         blind_label="A",
     )

@@ -233,7 +233,17 @@ class ExtractionConfirmation(OwnedRecord, Base):
             name="uq_extraction_confirmation_workflow_owner",
         ),
         UniqueConstraint(
-            "workflow_id", "owner_id", name="uq_extraction_confirmation_current"
+            "workflow_id",
+            "owner_id",
+            "confirmation_number",
+            name="uq_extraction_confirmation_version",
+        ),
+        Index(
+            "uq_extraction_confirmation_current",
+            "workflow_id",
+            "owner_id",
+            unique=True,
+            postgresql_where=sql_text("is_current"),
         ),
         ForeignKeyConstraint(
             ["workflow_id", "owner_id"],
@@ -245,13 +255,24 @@ class ExtractionConfirmation(OwnedRecord, Base):
             "workflow_version >= 1", name="extraction_confirmation_version_positive"
         ),
         CheckConstraint(
+            "confirmation_number >= 1", name="extraction_confirmation_number_positive"
+        ),
+        CheckConstraint(
             "extraction_hash ~ '^[0-9a-f]{64}$'",
             name="extraction_confirmation_hash_sha256",
+        ),
+        CheckConstraint(
+            "(is_current AND invalidated_at IS NULL) OR "
+            "(NOT is_current AND invalidated_at IS NOT NULL)",
+            name="extraction_confirmation_current_consistent",
         ),
     )
 
     workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    confirmation_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    invalidated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
     extraction_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     confirmed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
 
@@ -290,6 +311,17 @@ class ProviderRun(OwnedRecord, MutableRecord, Base):
             name="fk_provider_run_workflow_owner",
             ondelete="SET NULL (workflow_id)",
         ),
+        ForeignKeyConstraint(
+            ["medical_attempt_id", "owner_id"],
+            ["medical_review_attempts.id", "medical_review_attempts.owner_id"],
+            name="fk_provider_run_medical_attempt_owner",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("response_id", name="uq_provider_run_response_id"),
+        CheckConstraint(
+            "response_id IS NULL OR response_id ~ '^[0-9a-f]{32}$'",
+            name="provider_run_response_id_hex",
+        ),
         CheckConstraint(
             "input_tokens IS NULL OR input_tokens >= 0",
             name="provider_input_tokens_nonnegative",
@@ -312,6 +344,8 @@ class ProviderRun(OwnedRecord, MutableRecord, Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     error_class: Mapped[str | None] = mapped_column(String(128))
+    medical_attempt_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    response_id: Mapped[str | None] = mapped_column(String(32))
 
 
 class DraftVersion(OwnedRecord, Base):
@@ -410,6 +444,7 @@ class Claim(OwnedRecord, MutableRecord, Base):
     causality: Mapped[str | None] = mapped_column(Text)
     numeric_value: Mapped[str | None] = mapped_column(Text)
     modality: Mapped[str | None] = mapped_column(Text)
+    medical_uncertainty: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_medical: Mapped[bool] = mapped_column(Boolean, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
@@ -452,6 +487,18 @@ class Evidence(OwnedRecord, Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
+            ["review_decision_id", "owner_id"],
+            ["claim_review_decisions.id", "claim_review_decisions.owner_id"],
+            name="fk_evidence_review_decision_owner",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "review_decision_id",
+            "claim_id",
+            "source_document_id",
+            name="uq_evidence_review_claim_document",
+        ),
+        ForeignKeyConstraint(
             ["source_document_id", "owner_id"],
             ["source_documents.id", "source_documents.owner_id"],
             name="fk_evidence_document_owner",
@@ -475,6 +522,10 @@ class Evidence(OwnedRecord, Base):
         CheckConstraint(
             "risk IN ('green', 'yellow', 'red')", name="evidence_risk_known"
         ),
+        CheckConstraint(
+            "response_id IS NULL OR response_id ~ '^[0-9a-f]{32}$'",
+            name="evidence_response_id_hex",
+        ),
     )
 
     claim_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
@@ -487,17 +538,26 @@ class Evidence(OwnedRecord, Base):
     limitations: Mapped[str] = mapped_column(Text, nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     review_model_run_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    review_decision_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    response_id: Mapped[str | None] = mapped_column(String(32))
 
 
 class ClaimReviewDecision(OwnedRecord, Base):
     __tablename__ = "claim_review_decisions"
     __table_args__ = (
         UniqueConstraint("id", "owner_id", name="uq_claim_review_id_owner"),
+        UniqueConstraint("attempt_id", name="uq_claim_review_attempt"),
         ForeignKeyConstraint(
             ["workflow_id", "owner_id"],
             ["content_workflows.id", "content_workflows.owner_id"],
             name="fk_claim_review_workflow_owner",
             ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id", "owner_id"],
+            ["medical_review_attempts.id", "medical_review_attempts.owner_id"],
+            name="fk_claim_review_attempt_owner",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["extraction_confirmation_id", "workflow_id", "owner_id"],
@@ -515,6 +575,12 @@ class ClaimReviewDecision(OwnedRecord, Base):
             name="fk_claim_review_model_run_owner",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["draft_version_id", "workflow_id", "owner_id"],
+            ["draft_versions.id", "draft_versions.workflow_id", "draft_versions.owner_id"],
+            name="fk_claim_review_draft_owner",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint("workflow_version >= 1", name="claim_review_version_positive"),
         CheckConstraint(
             "extraction_hash ~ '^[0-9a-f]{64}$'", name="claim_review_hash_sha256"
@@ -526,17 +592,82 @@ class ClaimReviewDecision(OwnedRecord, Base):
             "cardinality(blocking_reasons) <= 64",
             name="claim_review_blocking_reasons_bounded",
         ),
+        CheckConstraint(
+            "validity_seconds BETWEEN 1 AND 604800",
+            name="claim_review_validity_bounded",
+        ),
+        CheckConstraint(
+            "classification_response_id ~ '^[0-9a-f]{32}$'",
+            name="claim_review_response_id_hex",
+        ),
+        CheckConstraint(
+            "(draft_version_id IS NULL AND draft_hash IS NULL) OR "
+            "(draft_version_id IS NOT NULL AND draft_hash ~ '^[0-9a-f]{64}$')",
+            name="claim_review_draft_binding_paired",
+        ),
     )
 
     workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     extraction_confirmation_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    attempt_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
     workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
     extraction_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     blocking_reasons: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    validity_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     model_run_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    classification_response_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    draft_version_id: Mapped[UUID | None] = mapped_column(UUID_TYPE)
+    draft_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class MedicalReviewAttempt(OwnedRecord, Base):
+    __tablename__ = "medical_review_attempts"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_medical_attempt_id_owner"),
+        ForeignKeyConstraint(
+            ["workflow_id", "owner_id"],
+            ["content_workflows.id", "content_workflows.owner_id"],
+            name="fk_medical_attempt_workflow_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["extraction_confirmation_id", "workflow_id", "owner_id"],
+            [
+                "extraction_confirmations.id",
+                "extraction_confirmations.workflow_id",
+                "extraction_confirmations.owner_id",
+            ],
+            name="fk_medical_attempt_extraction_owner",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "uq_medical_attempt_processing",
+            "workflow_id",
+            "owner_id",
+            unique=True,
+            postgresql_where=sql_text("status = 'processing'"),
+        ),
+        CheckConstraint(
+            "status IN ('processing', 'completed', 'failed')",
+            name="medical_attempt_status_known",
+        ),
+        CheckConstraint(
+            "lease_until > started_at", name="medical_attempt_lease_after_start"
+        ),
+    )
+
+    workflow_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    extraction_confirmation_id: Mapped[UUID] = mapped_column(UUID_TYPE, nullable=False)
+    base_workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    pending_workflow_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    lease_until: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    failure_class: Mapped[str | None] = mapped_column(String(64))
 
 
 class ReviewDecision(OwnedRecord, Base):

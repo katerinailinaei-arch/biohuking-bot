@@ -7,8 +7,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from bodrye_bot.domain.errors import SafeError
+from bodrye_bot.domain.medical import ClaimType
 from bodrye_bot.operations.model_activation import ActivationGate
 from bodrye_bot.ports.llm import (
     ChangeAssessment,
@@ -16,8 +18,10 @@ from bodrye_bot.ports.llm import (
     ClaimsRequest,
     ClaimVerdict,
     DraftRequest,
+    EvidenceFragment,
     EvidenceRequest,
     LLMProvider,
+    MedicalClaimInput,
 )
 from evals.report import (
     DatasetValidationError,
@@ -122,29 +126,34 @@ class LLMProviderEvalAdapter:
         )
 
     async def _dispatch(self, case: EvalCase) -> tuple[str, tuple[str, ...]]:
-        if case.expected_schema == "claims-v1":
+        if case.expected_schema == "claims-medical-v2":
+            claim = _eval_claim(case)
             claims_response = await self._provider.classify_claims(
                 ClaimsRequest(
                     owner_id=0,
                     workflow_id=None,
                     prompt_version=self.prompt_version,
                     schema_version=self.schema_version,
-                    claims=(case.input["text"],),
+                    claims=(claim,),
                 )
             )
             verdict = claims_response.claims[0].verdict if claims_response.claims else None
             exact = claims_response.claims[0].exact_text if claims_response.claims else ""
             passed = _claim_assertions(case, verdict, exact)
             response_id = claims_response.response_id
-        elif case.expected_schema == "evidence-v1":
+        elif case.expected_schema == "evidence-medical-v2":
+            claim = _eval_claim(case)
             evidence_response = await self._provider.synthesize_evidence(
                 EvidenceRequest(
                     owner_id=0,
                     workflow_id=None,
                     prompt_version=self.prompt_version,
                     schema_version=self.schema_version,
-                    claim=case.input["text"],
-                    evidence_fragments=(case.input["text"],),
+                    claim=claim,
+                    evidence_fragment=EvidenceFragment(
+                        source_document_id=UUID(int=2),
+                        exact_excerpt=case.input["text"],
+                    ),
                 )
             )
             passed = _evidence_assertions(case, evidence_response.verdict)
@@ -183,6 +192,29 @@ class LLMProviderEvalAdapter:
         else:
             raise ValueError("unsupported eval schema")
         return response_id, passed
+
+
+def _eval_claim(case: EvalCase) -> MedicalClaimInput:
+    assertions = set(case.hard_assertions)
+    if "trap_numeric" in assertions:
+        claim_type = ClaimType.NUMERIC
+    elif "trap_causal" in assertions:
+        claim_type = ClaimType.CAUSAL
+    elif "trap_association" in assertions:
+        claim_type = ClaimType.ASSOCIATION
+    else:
+        claim_type = ClaimType.SAFETY
+    return MedicalClaimInput(
+        claim_id=UUID(int=1),
+        exact_text=case.input["text"],
+        claim_type=claim_type,
+        population="Взрослые",
+        context=case.input["topic"],
+        causality="Проверяемая причинность" if claim_type is ClaimType.CAUSAL else None,
+        numeric_value="7 часов" if claim_type is ClaimType.NUMERIC else None,
+        modality="Может",
+        medical_uncertainty=False,
+    )
 
 
 def _claim_assertions(
