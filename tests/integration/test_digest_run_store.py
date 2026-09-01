@@ -7,8 +7,19 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from bodrye_bot.db.repositories import digest_runs as digest_runs_module
 from bodrye_bot.db.repositories.digest_runs import SqlAlchemyDigestRunStore
 from bodrye_bot.digest.worker import DigestRunStatus
+
+
+def test_session_digest_reader_has_no_unfenced_lifecycle_commands() -> None:
+    """Break caught: a shared session regains an unfenced digest lifecycle mutation."""
+    reader_type = vars(digest_runs_module)["_SessionDigestRunReader"]
+
+    assert not hasattr(reader_type, "claim")
+    assert not hasattr(reader_type, "delivered")
+    assert not hasattr(reader_type, "release")
+    assert not hasattr(reader_type, "unknown")
 
 
 @pytest.mark.asyncio

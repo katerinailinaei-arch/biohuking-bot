@@ -127,3 +127,12 @@ The production composition root has not yet been created in the scaffold, so `Sq
 - Scoring now identifies `component_max_risk_min_v2`, including it in the immutable snapshot fingerprint. Ordinary components aggregate by max; provenance risk safety aggregates by min.
 - A rejected `mark_delivered` fence now raises redacted `SafeErrorCode.DELIVERY_UNKNOWN`; rejected retry/unknown fences receive the same conservative treatment.
 - Added independent-store PostgreSQL race coverage (exactly one durable claim) and prior-day lease-sweep coverage. Removed the UoW `digest_runs` path and public legacy repository export so lifecycle users must use the independently committing store.
+
+## Review round 4 — durable empty delivery and true completion evidence
+
+- RED: the new PostgreSQL worker/store scenarios passed, while the read-only boundary test failed exactly because `_SessionDigestRunReader.claim` still exposed an unfenced lifecycle command (`1 failed, 2 passed`).
+- GREEN: the narrow regression passed `3 passed`; focused digest unit/e2e/PostgreSQL plus UoW regressions passed `36 passed in 5.14s`; the final full PostgreSQL suite passed `343 passed in 41.42s`.
+- Added a real `DigestWorker` + `SqlAlchemyDigestRunStore` E2E path for a zero-card digest with a safe source failure. The first owner/date run sends one Russian digest and persists `delivered`; the repeated run sends nothing and does not reload candidates.
+- Added a successful 10:09 Moscow start with an injected 10:12 completion. Both returned delivery and durable record contain the true completion time and `late=True`, proving the path reaches the successful fenced `mark_delivered` write.
+- `_SessionDigestRunReader` is now read-only and retains only `get`; all old unfenced claim/delivered/release/unknown commands and their transition helper were deleted. `SqlAlchemyDigestRunStore` remains the sole lifecycle API, and normal UoW regressions remain green.
+- Alembic check reported no new operations; the `0010_digest_run_attempt → 0009_digest_runs → 0010_digest_run_attempt` round-trip passed. Ruff, mypy and `git diff --check` were clean.
