@@ -22,6 +22,12 @@ def base_settings(**overrides: object) -> dict[str, object]:
     return values
 
 
+def test_settings_accept_false_string_from_env_file() -> None:
+    settings = Settings(**base_settings(paid_fallback_enabled="false"))
+
+    assert settings.paid_fallback_enabled is False
+
+
 def test_settings_use_safe_mvp_defaults() -> None:
     settings = Settings(**base_settings())
 
@@ -73,4 +79,10 @@ def test_get_settings_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert settings.telegram_owner_id == 42
     assert settings.telegram_channel_id == -100123
+
+
+def test_settings_accept_public_channel_username() -> None:
+    settings = Settings(**base_settings(telegram_channel_id="@bodryelyudi"))
+
+    assert settings.telegram_channel_id == "@bodryelyudi"
 

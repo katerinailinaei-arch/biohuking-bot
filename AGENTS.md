@@ -115,6 +115,7 @@ Adapters → PostgreSQL | Groq/OpenAI APIs | Telegram Bot API
 | `idea.md` | проблему, JTBD, scope и голос продукта | после утверждённого продуктового решения Кети |
 | `research.md` | подтверждённые факты, vendor claims, рекомендации | после фактчекинга нового источника с URL и датой |
 | `docs/discovery/2026-08-28-pre-spec-decisions.md` | ответы и решения discovery | не переписывать; новое решение оформлять отдельно |
+| `docs/discovery/2026-09-04-manual-medical-review.md` | ручная проверка фактов вместо авто-медгейта в первом контуре | только после нового явного решения Кети |
 | `docs/superpowers/specs/2026-08-28-bodrye-lyudi-mvp-design.md` | канонические требования, AC-01…AC-20 | только после явного согласования изменения Кети |
 | `docs/superpowers/plans/2026-08-28-bodrye-lyudi-mvp.md` | задачи, интерфейсы, тесты и phase gates | при утверждённой корректировке способа реализации |
 | `Plan.md` | живой фазовый трекер, статусы, blockers и evidence | после каждой задачи и каждого phase gate |
@@ -122,7 +123,7 @@ Adapters → PostgreSQL | Groq/OpenAI APIs | Telegram Bot API
 | `docs/pilot/*` | доказательства acceptance и двухнедельный runbook | при каждом release gate и событии пилота |
 | `docs/archive/*` | сохранённые старые версии | не использовать как текущие требования |
 
-Порядок источников истины: явное текущее решение Кети → утверждённая MVP-спецификация → `Plan.md` (фазы, статусы, gates) + текущий implementation plan (интерфейсы, TDD-шаги) → `idea.md` → `AGENTS.md`/`README.md` → `research.md`. При противоречии остановись, покажи конфликт и не угадывай.
+Порядок источников истины: явное текущее решение Кети (включая `docs/discovery/2026-09-04-manual-medical-review.md`) → утверждённая MVP-спецификация → `Plan.md` (фазы, статусы, gates) + текущий implementation plan (интерфейсы, TDD-шаги) → `idea.md` → `AGENTS.md`/`README.md` → `research.md`. Для первого рабочего контура ручная проверка Кети важнее незакрытого P4.T11. При противоречии остановись, покажи конфликт и не угадывай.
 
 ## 8. Commands
 

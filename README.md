@@ -4,7 +4,15 @@
 
 ## Текущее состояние
 
-Реализация идёт по [Plan.md](Plan.md). Созданы Python 3.12 application scaffold, owner-only Telegram shell, provider-neutral LLM boundary, офлайн eval gate, безопасный digest и версионированный claim-level medical gate с durable attempt fencing, строгой evidence provenance и привязкой решения к фактическим provider responses. Полный worker появляется в следующих задачах плана.
+Реализация идёт по [Plan.md](Plan.md). Полный medical/evidence конвейер в коде есть, но **первый рабочий контур** другой: Кети пишет `/draft тема`, сама проверяет факты и публикует через `/reviewed` и `/publish` (см. [решение от 4 сентября 2026](docs/discovery/2026-09-04-manual-medical-review.md)). P6/P7 пока не делаем.
+
+Запуск бота:
+
+```powershell
+python -m bodrye_bot.main_bot
+```
+
+Черновик первого контура пока живёт в памяти процесса: после перезапуска бота незавершённый текст нужно сделать заново.
 
 ## Локальная установка
 
