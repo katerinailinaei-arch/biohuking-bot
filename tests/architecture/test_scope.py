@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def test_mvp_source_has_no_removed_capability_modules() -> None:
-    banned = {"voice", "stories", "instagram", "ads", "event_calendar", "userbot"}
+    banned = {"instagram", "ads", "event_calendar", "userbot"}
     identifiers = {
         token
         for path in Path("src").rglob("*.py")

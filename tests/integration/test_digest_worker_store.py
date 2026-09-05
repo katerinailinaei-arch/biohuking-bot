@@ -33,7 +33,10 @@ class EmptyLoader:
 class RecordingTelegram:
     calls: list[tuple[int, str]] = field(default_factory=list)
 
-    async def deliver(self, *, owner_id: int, text: str) -> DeliveryOutcome:
+    async def deliver(
+        self, *, owner_id: int, text: str, digest: object | None = None
+    ) -> DeliveryOutcome:
+        del digest
         self.calls.append((owner_id, text))
         return DeliveryOutcome.SENT
 
@@ -77,7 +80,7 @@ async def test_empty_digest_worker_store_delivers_once_and_persists_owner_date_t
     assert telegram.calls[0][0] == owner_id
     assert "Утренний дайджест" in telegram.calls[0][1]
     assert "Сегодня сильных тем не найдено" in telegram.calls[0][1]
-    assert "WHO: временно недоступен" in telegram.calls[0][1]
+    assert "ВОЗ: временно недоступен" in telegram.calls[0][1]
     assert record.owner_id == owner_id
     assert record.digest_date == digest_date
     assert record.status is DigestRunStatus.DELIVERED

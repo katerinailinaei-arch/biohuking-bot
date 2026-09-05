@@ -145,7 +145,8 @@ python -m pytest -v
 docker compose up -d postgres
 python -m alembic upgrade head
 python -m bodrye_bot.main_bot
-python -m bodrye_bot.main_worker
+# Дайджест 10:00 МСК и /digest живут в этом процессе. main_worker не запускать параллельно.
+# Первый /start — онбординг из 3 сообщений; /help и кнопка «Помощь» повторяют инструкцию; /settov — тон.
 
 # Сборка и health gate
 docker compose build

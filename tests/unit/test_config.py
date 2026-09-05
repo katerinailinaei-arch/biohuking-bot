@@ -17,6 +17,7 @@ def base_settings(**overrides: object) -> dict[str, object]:
         "telegram_owner_id": 42,
         "telegram_channel_id": -100123,
         "groq_api_key": "groq-secret",
+        "_env_file": None,
     }
     values.update(overrides)
     return values
@@ -62,6 +63,8 @@ def test_secrets_are_typed_and_not_exposed_in_repr() -> None:
     rendered = repr(settings)
     assert "telegram-secret" not in rendered
     assert "groq-secret" not in rendered
+    with_deepgram = Settings(**base_settings(deepgram_api_key="dg-secret"))
+    assert "dg-secret" not in repr(with_deepgram)
 
 
 def test_openai_requires_key_when_explicitly_selected() -> None:

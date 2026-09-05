@@ -60,7 +60,9 @@ class DigestRunRepository(Protocol):
 
 
 class TelegramDigestPort(Protocol):
-    async def deliver(self, *, owner_id: int, text: str) -> DeliveryOutcome: ...
+    async def deliver(
+        self, *, owner_id: int, text: str, digest: Digest | None = None
+    ) -> DeliveryOutcome: ...
 
 
 class Clock(Protocol):
@@ -94,15 +96,22 @@ class DigestWorker:
         )
         self._service = service or DigestService()
 
-    async def run_due(self, now: datetime) -> DigestDelivery | None:
+    async def run_due(self, now: datetime, *, force: bool = False) -> DigestDelivery | None:
         if now.tzinfo is None:
             raise ValueError("Digest worker requires timezone-aware time")
         moscow = now.astimezone(MOSCOW)
         await self._runs.expire_leases(now=now)
-        if moscow.weekday() >= 5 or moscow.time() < _DUE:
+        if not force and (moscow.weekday() >= 5 or moscow.time() < _DUE):
             return None
         digest_date = moscow.date()
         claim = await self._runs.claim(owner_id=self._owner_id, digest_date=digest_date, now=now)
+        if claim is None and force:
+            forget = getattr(self._runs, "forget", None)
+            if callable(forget):
+                await forget(owner_id=self._owner_id, digest_date=digest_date)
+                claim = await self._runs.claim(
+                    owner_id=self._owner_id, digest_date=digest_date, now=now
+                )
         if claim is None:
             return None
         attempt_id = claim.attempt_id
@@ -122,7 +131,7 @@ class DigestWorker:
             raise
         try:
             outcome = await self._telegram.deliver(
-                owner_id=self._owner_id, text=render_digest(digest)
+                owner_id=self._owner_id, text=render_digest(digest), digest=digest
             )
         except Exception:
             marked = await self._runs.mark_unknown(

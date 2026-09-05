@@ -15,7 +15,7 @@ from bodrye_bot.digest.service import (
     PreliminaryRisk,
     SourceFailure,
 )
-from bodrye_bot.digest.views import render_digest
+from bodrye_bot.digest.views import digest_cover_url, first_source_url, render_digest
 from bodrye_bot.digest.worker import DeliveryOutcome, DigestWorker
 from bodrye_bot.domain.sources import SourceRole
 
@@ -65,7 +65,10 @@ class FakeRuns:
 class FakeTelegram:
     calls: list[tuple[int, str]] = field(default_factory=list)
 
-    async def deliver(self, *, owner_id: int, text: str) -> DeliveryOutcome:
+    async def deliver(
+        self, *, owner_id: int, text: str, digest: object | None = None
+    ) -> DeliveryOutcome:
+        del digest
         self.calls.append((owner_id, text))
         return DeliveryOutcome.SENT
 
@@ -122,7 +125,7 @@ async def test_weekday_worker_delivers_partial_digest_once_and_records_lateness(
     assert runs.records == [(42, date(2026, 9, 1), now, False)]
     assert len(telegram.calls) == 1
     assert telegram.calls[0][0] == 42
-    assert "WHO: временно недоступен" in telegram.calls[0][1]
+    assert "ВОЗ: временно недоступен" in telegram.calls[0][1]
 
 
 @pytest.mark.asyncio
@@ -192,3 +195,32 @@ def test_digest_view_shows_date_and_escapes_untrusted_source_content() -> None:
     assert "&lt;b&gt;не доверять&lt;/b&gt;" in rendered
     assert "javascript:" not in rendered
     assert "01.09.2026" in rendered
+
+
+def test_first_source_url_skips_javascript_scheme() -> None:
+    card = DigestCard(
+        title="тема",
+        topic_fingerprint="topic",
+        summary="текст",
+        rubric="Сон",
+        published_at=date(2026, 9, 1),
+        audience_reason="важно",
+        provenance_urls=("javascript:alert(1)", "https://example.org/ok"),
+        source_roles=(SourceRole.TOPIC,),
+        preliminary_risk=PreliminaryRisk.GREEN,
+        score=0.9,
+        raw_score=0.9,
+        score_components={},
+        scoring_snapshot={},
+        score_version="test-v1",
+        selection_reason="выбрано",
+    )
+
+    assert first_source_url(card) == "https://example.org/ok"
+
+
+def test_digest_cover_url_stays_https() -> None:
+    url = digest_cover_url("сон <b>x</b>")
+
+    assert url.startswith("https://image.pollinations.ai/prompt/")
+    assert "<" not in url

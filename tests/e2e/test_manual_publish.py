@@ -8,8 +8,13 @@ from bodrye_bot.domain.errors import SafeErrorCode
 from bodrye_bot.editorial.memory import InMemoryChannelPublisher, InMemoryManualPostStore
 from bodrye_bot.editorial.template_draft import TemplateDraftWriter
 from bodrye_bot.identity.service import OwnerGuard
-from bodrye_bot.telegram.router import CallbackCodec, IncomingCallback, IncomingMessage, TelegramShell
-from bodrye_bot.telegram.views import NEUTRAL_DENIAL
+from bodrye_bot.telegram.router import (
+    CallbackCodec,
+    IncomingCallback,
+    IncomingMessage,
+    TelegramShell,
+)
+from bodrye_bot.telegram.views import INLINE_PUBLISH, INLINE_REVIEWED, NEUTRAL_DENIAL
 
 
 @pytest.fixture
@@ -40,13 +45,21 @@ async def test_owner_draft_review_publish_sends_once(
     assert "я проверила" in draft.text.lower()
     assert draft.buttons
 
-    reviewed = await bot.handle_callback(
-        IncomingCallback(sender_id=42, data=draft.buttons[0].callback_data)
+    reviewed_data = next(
+        button.callback_data for button in draft.buttons if button.text == INLINE_REVIEWED
     )
-    assert "проверено" in reviewed.text.lower()
+    reviewed = await bot.handle_callback(
+        IncomingCallback(sender_id=42, data=reviewed_data)
+    )
+    assert "проверенн" in reviewed.text.lower()
 
     published = await bot.handle_callback(
-        IncomingCallback(sender_id=42, data=reviewed.buttons[0].callback_data)
+        IncomingCallback(
+            sender_id=42,
+            data=next(
+                button.callback_data for button in reviewed.buttons if button.text == INLINE_PUBLISH
+            ),
+        )
     )
     post = await store.latest(42)
 

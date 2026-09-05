@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bodrye_bot.config import Settings
+from bodrye_bot.digest.worker import DigestWorker
 from bodrye_bot.editorial.memory import InMemoryManualPostStore
 from bodrye_bot.editorial.ports import ChannelPublisher
 from bodrye_bot.editorial.template_draft import TemplateDraftWriter
 from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.telegram.onboarding import OnboardingService, ReadinessCheck
+from bodrye_bot.telegram.owner_guide import FileOwnerGuide
 from bodrye_bot.telegram.router import CallbackCodec, TelegramShell
 
 _MANUAL_POSTS = InMemoryManualPostStore()
@@ -20,6 +24,7 @@ def build_telegram_shell(
     sources_check: ReadinessCheck | None = None,
     style_check: ReadinessCheck | None = None,
     channel_publisher: ChannelPublisher | None = None,
+    digest_worker: DigestWorker | None = None,
 ) -> TelegramShell:
     """Compose the owner shell and the short manual-publish path."""
     onboarding = OnboardingService(
@@ -37,6 +42,8 @@ def build_telegram_shell(
         manual_post_store=_MANUAL_POSTS,
         draft_writer=TemplateDraftWriter(),
         channel_publisher=channel_publisher,
+        digest_worker=digest_worker,
+        owner_guide=FileOwnerGuide(Path("data") / "owner_guide.json"),
     )
 
 

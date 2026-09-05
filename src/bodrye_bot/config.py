@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     telegram_channel_id: TelegramChatId
     groq_api_key: SecretStr
     openai_api_key: SecretStr | None = None
+    deepgram_api_key: SecretStr | None = None
 
     llm_provider: ProviderName = ProviderName.GROQ
     llm_model: str = "openai/gpt-oss-120b"
@@ -58,6 +59,13 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_access_key_id: SecretStr | None = None
     s3_secret_access_key: SecretStr | None = None
+
+    @field_validator("deepgram_api_key", mode="before")
+    @classmethod
+    def empty_deepgram_key(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("paid_fallback_enabled", mode="before")
     @classmethod

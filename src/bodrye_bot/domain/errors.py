@@ -22,6 +22,7 @@ class SafeErrorCode(StrEnum):
     DELIVERY_UNKNOWN = "delivery_unknown"
     BACKUP_STALE = "backup_stale"
     INVALID_TRANSITION = "invalid_transition"
+    TRANSCRIPTION_FAILED = "transcription_failed"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -112,6 +113,11 @@ _TEMPLATES: dict[SafeErrorCode, SafeErrorTemplate] = {
         "Это действие сейчас недоступно.",
         "Текущее состояние и данные не изменены.",
         "Вернитесь к доступному шагу редакционного процесса.",
+    ),
+    SafeErrorCode.TRANSCRIPTION_FAILED: SafeErrorTemplate(
+        "Не удалось расшифровать аудиосообщение.",
+        "Текст не сохранён, исходное сообщение в чате на месте.",
+        "Проверьте DEEPGRAM_API_KEY в .env и отправьте аудио ещё раз.",
     ),
     SafeErrorCode.INTERNAL_ERROR: SafeErrorTemplate(
         "Произошла внутренняя ошибка.",

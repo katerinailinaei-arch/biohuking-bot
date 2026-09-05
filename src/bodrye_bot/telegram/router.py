@@ -10,20 +10,48 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
+from bodrye_bot.digest.memory import CARD_SHELF, DigestCardShelf
+from bodrye_bot.digest.views import digest_cover_url
+from bodrye_bot.digest.worker import DigestWorker
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
+from bodrye_bot.domain.headlines import russian_headline
 from bodrye_bot.domain.manual_post import ManualPost, ManualPostPolicy
 from bodrye_bot.domain.workflow import Actor, WorkflowPolicy, WorkflowState, WorkflowStatus
 from bodrye_bot.editorial.ports import ChannelPublisher, DraftWriter, ManualPostStore
+from bodrye_bot.editorial.studio import StudioKind, StudioWriter
 from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.telegram.onboarding import OnboardingService
+from bodrye_bot.telegram.owner_guide import InMemoryOwnerGuide, OwnerGuide
+from bodrye_bot.telegram.studio_state import StudioSession, StudioSessionStore, StudioWait
 from bodrye_bot.telegram.views import (
+    CARD_KEEP_PREFIX,
+    CARD_SKIP_TEXT,
     DRAFT_NEED_TOPIC,
-    HELP_TEXT,
+    INLINE_PUBLISH,
+    INLINE_REFINE,
+    INLINE_REGEN,
+    INLINE_REVIEWED,
+    MAIN_MENU_TEXT,
+    MENU_HELP,
+    MENU_POST,
+    MENU_PUBLISH,
+    MENU_REVIEWED,
+    MENU_TOPICS,
     NEUTRAL_DENIAL,
+    ONBOARDING_MESSAGES,
+    PYTHON_IN_CHAT,
+    RETURNING_START_TEXT,
+    REVISE_PROMPT,
+    SETTOV_MORE,
+    SETTOV_NEED_SAMPLE,
+    SETTOV_PROMPT,
+    SETTOV_SAVED,
+    STUDIO_PROMPTS,
     render_manual_draft,
     render_manual_published,
     render_manual_reviewed,
     render_safe_error,
+    render_studio_text,
 )
 
 _WORKFLOW_TARGETS: dict[str, WorkflowStatus] = {
@@ -34,7 +62,31 @@ _WORKFLOW_TARGETS: dict[str, WorkflowStatus] = {
     "mark_published": WorkflowStatus.PUBLISHED,
 }
 _MANUAL_CALLBACK_ACTIONS = frozenset({"reviewed", "publish_now"})
-_CALLBACK_ACTIONS = frozenset(_WORKFLOW_TARGETS) | _MANUAL_CALLBACK_ACTIONS
+_STUDIO_CALLBACK_ACTIONS = frozenset({"refine", "regen", "copy", "home"})
+_DIGEST_CALLBACK_ACTIONS = frozenset({"develop", "keep", "skip"})
+_CALLBACK_ACTIONS = (
+    frozenset(_WORKFLOW_TARGETS)
+    | _MANUAL_CALLBACK_ACTIONS
+    | _STUDIO_CALLBACK_ACTIONS
+    | _DIGEST_CALLBACK_ACTIONS
+)
+_MENU_KIND = {
+    MENU_POST: StudioKind.POST,
+    "Пост": StudioKind.POST,
+    "Написать пост": StudioKind.POST,
+}
+_PROMPT_BY_KIND = {
+    StudioKind.POST: STUDIO_PROMPTS[MENU_POST],
+    StudioKind.STORIES: STUDIO_PROMPTS[MENU_POST],
+    StudioKind.HEADLINES: STUDIO_PROMPTS[MENU_POST],
+    StudioKind.MY_STORY: STUDIO_PROMPTS[MENU_POST],
+    StudioKind.SHORT: STUDIO_PROMPTS[MENU_POST],
+}
+_TOPICS_LABELS = frozenset({MENU_TOPICS, "Темы"})
+_REVIEWED_LABELS = frozenset({MENU_REVIEWED, "Я проверила"})
+_PUBLISH_LABELS = frozenset({MENU_PUBLISH, "В канал"})
+_HELP_LABELS = frozenset({MENU_HELP, "Помощь", "/help"})
+_DONE_PHRASES = frozenset({"готово", "готово.", "достаточно"})
 _LOG = logging.getLogger(__name__)
 
 
@@ -42,6 +94,7 @@ _LOG = logging.getLogger(__name__)
 class IncomingMessage:
     sender_id: int
     text: str
+    transcribed: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,7 +106,8 @@ class IncomingCallback:
 @dataclass(frozen=True)
 class TelegramButton:
     text: str
-    callback_data: str
+    callback_data: str = ""
+    url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +116,11 @@ class TelegramResponse:
     gates: frozenset[str] = field(default_factory=frozenset)
     ready: bool | None = None
     buttons: tuple[TelegramButton, ...] = ()
+    show_main_keyboard: bool = False
+    toast: str | None = None
+    skip_message: bool = False
+    photo_url: str | None = None
+    extra_messages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,7 +178,7 @@ class CallbackCodec:
 
 
 class TelegramShell:
-    """Guard-first application adapter; it deliberately makes no network calls."""
+    """Owner-guarded Telegram commands; digest fetch is the only network path."""
 
     def __init__(
         self,
@@ -134,7 +193,12 @@ class TelegramShell:
         manual_post_store: ManualPostStore | None = None,
         draft_writer: DraftWriter | None = None,
         channel_publisher: ChannelPublisher | None = None,
+        digest_worker: DigestWorker | None = None,
         manual_post_policy: ManualPostPolicy | None = None,
+        studio_writer: StudioWriter | None = None,
+        studio_sessions: StudioSessionStore | None = None,
+        card_shelf: DigestCardShelf | None = None,
+        owner_guide: OwnerGuide | None = None,
     ) -> None:
         self._owner_guard = owner_guard
         self._onboarding = onboarding if onboarding is not None else OnboardingService()
@@ -146,36 +210,74 @@ class TelegramShell:
         self._manual_post_store = manual_post_store
         self._draft_writer = draft_writer
         self._channel_publisher = channel_publisher
+        self._digest_worker = digest_worker
         self._manual_post_policy = (
             manual_post_policy if manual_post_policy is not None else ManualPostPolicy()
         )
+        self._studio_writer = studio_writer if studio_writer is not None else StudioWriter()
+        self._studio_sessions = (
+            studio_sessions if studio_sessions is not None else StudioSessionStore()
+        )
+        self._card_shelf = card_shelf if card_shelf is not None else CARD_SHELF
+        self._owner_guide = owner_guide if owner_guide is not None else InMemoryOwnerGuide()
 
     async def handle(self, message: IncomingMessage) -> TelegramResponse:
         try:
             owner_id = self._owner_guard.authorize(message.sender_id)
+            if message.text.strip().lower().startswith("python"):
+                return TelegramResponse(PYTHON_IN_CHAT)
+            label = message.text.strip()
+            if label in _TOPICS_LABELS:
+                return await self._send_digest()
+            if label in _REVIEWED_LABELS:
+                return await self._review_latest(owner_id)
+            if label in _PUBLISH_LABELS:
+                return await self._publish_latest(owner_id)
+            if label in _HELP_LABELS:
+                return _guide_response()
+            menu_kind = _MENU_KIND.get(label)
+            if menu_kind is not None:
+                return self._ask_studio_topic(owner_id, menu_kind)
             if message.text == "/start":
-                result = await self._onboarding.check()
-                text = (
-                    f"{result.text}\n\n"
-                    "Этот список — большой план на потом. Короткий путь уже можно пробовать:\n"
-                    f"{HELP_TEXT}"
-                )
-                return TelegramResponse(text=text, gates=result.gates, ready=result.ready)
-            command, _, rest = message.text.partition(" ")
+                return await self._start(owner_id)
+            session = self._studio_sessions.get(owner_id)
+            command, rest = _split_command(message.text)
+            if command == "/settov":
+                return self._begin_tone(owner_id)
+            if command == "/help":
+                return _guide_response()
+            waiting_tone = session is not None and session.wait is StudioWait.TONE
+            if waiting_tone and not command.startswith("/"):
+                return self._collect_tone(owner_id, message.text)
+            if session is not None and not command.startswith("/"):
+                if session.wait is StudioWait.REVISE or (
+                    message.transcribed and session.post_id is not None
+                ):
+                    return await self._revise_studio(owner_id, session, message.text)
+                if session.wait is StudioWait.TOPIC:
+                    return await self._generate_studio(owner_id, session.kind, message.text)
             if command == "/draft":
-                return await self._create_draft(owner_id, rest.strip())
+                return await self._create_draft(owner_id, rest)
             if command == "/reviewed":
                 return await self._review_latest(owner_id)
             if command == "/publish":
                 return await self._publish_latest(owner_id)
+            if command == "/digest":
+                return await self._send_digest()
+            if message.transcribed and message.text.strip():
+                return await self._generate_studio(
+                    owner_id, StudioKind.POST, message.text
+                )
             text = {
                 "/status": "Статус проверяется в рабочем контуре.",
                 "/settings": "Настройки доступны только через безопасные шаги мастера.",
                 "/sources": "Разрешённые источники будут показаны после проверки доступа.",
-                "/style": "Профиль стиля доступен после калибровки.",
+                "/style": (
+                    "Профиль стиля доступен после калибровки. "
+                    "Для живого тона используйте /settov."
+                ),
                 "/costs": "Использование будет показано после подключения учёта.",
-                "/help": HELP_TEXT,
-            }.get(command, "Не удалось распознать команду. Используйте /help.")
+            }.get(command, "Не удалось распознать команду. Используйте меню внизу или /help.")
             return TelegramResponse(text=text)
         except SafeError as error:
             return self._owner_denial_or_safe_error(error)
@@ -191,8 +293,18 @@ class TelegramShell:
                 payload = self._callback_codec.decode(callback.data)
             except ValueError:
                 return _invalid_transition_response()
+            if payload.action in _DIGEST_CALLBACK_ACTIONS:
+                return await self._handle_digest_card(
+                    owner_id, payload.action, payload.record_id
+                )
+            if payload.action in _STUDIO_CALLBACK_ACTIONS:
+                return await self._handle_studio_callback(
+                    owner_id, payload.action, payload.record_id
+                )
             if payload.action in _MANUAL_CALLBACK_ACTIONS:
-                return await self._handle_manual_callback(owner_id, payload.action, payload.record_id)
+                return await self._handle_manual_callback(
+                    owner_id, payload.action, payload.record_id
+                )
             if self._workflow_repository is None:
                 return _invalid_transition_response()
             state = await self._workflow_repository.get(owner_id, payload.record_id)
@@ -210,6 +322,188 @@ class TelegramShell:
             return TelegramResponse("Черновик утверждён после повторной проверки состояния.")
         return TelegramResponse("Действие подтверждено после повторной проверки состояния.")
 
+    async def _start(self, owner_id: int) -> TelegramResponse:
+        result = await self._onboarding.check()
+        if not self._owner_guide.has_completed_onboarding(owner_id):
+            self._owner_guide.mark_onboarding_complete(owner_id)
+            return TelegramResponse(
+                text=ONBOARDING_MESSAGES[0],
+                extra_messages=ONBOARDING_MESSAGES[1:],
+                gates=result.gates,
+                ready=result.ready,
+                show_main_keyboard=True,
+            )
+        return TelegramResponse(
+            text=RETURNING_START_TEXT,
+            gates=result.gates,
+            ready=result.ready,
+            show_main_keyboard=True,
+        )
+
+    def _begin_tone(self, owner_id: int) -> TelegramResponse:
+        self._owner_guide.replace_tone_samples(owner_id, ())
+        self._studio_sessions.put(
+            owner_id, StudioSession(kind=StudioKind.POST, wait=StudioWait.TONE)
+        )
+        return TelegramResponse(SETTOV_PROMPT, show_main_keyboard=True)
+
+    def _collect_tone(self, owner_id: int, raw: str) -> TelegramResponse:
+        if raw.strip().lower() in _DONE_PHRASES:
+            samples = self._owner_guide.tone_samples(owner_id)
+            if not samples:
+                return TelegramResponse(SETTOV_NEED_SAMPLE, show_main_keyboard=True)
+            self._studio_sessions.clear(owner_id)
+            return TelegramResponse(
+                SETTOV_SAVED.format(count=len(samples)),
+                show_main_keyboard=True,
+            )
+        self._owner_guide.add_tone_sample(owner_id, raw)
+        return TelegramResponse(SETTOV_MORE, show_main_keyboard=True)
+
+    async def _send_digest(self) -> TelegramResponse:
+        if self._digest_worker is None:
+            return TelegramResponse(
+                "Дайджест ещё не подключен в этом запуске. "
+                "Перезапустите бота командой python -m bodrye_bot.main_bot в PowerShell."
+            )
+        delivery = await self._digest_worker.run_due(self._clock(), force=True)
+        if delivery is None:
+            return TelegramResponse(
+                "Сегодня дайджест уже отправлялся. "
+                "Новый автоматический — в будний день после 10:00 по Москве."
+            )
+        return TelegramResponse(
+            "Дайджест отправил отдельным сообщением в этот чат. "
+            "«Развить» — черновик, «Сохранить» — отложить, «Не интересно» — пропустить, "
+            "«Источник» — открыть ссылку. В канал ничего не публикуется, пока вы не нажмёте "
+            f"«{MENU_REVIEWED}» и «{MENU_PUBLISH}»."
+        )
+
+    async def _handle_digest_card(
+        self, owner_id: int, action: str, card_id: UUID
+    ) -> TelegramResponse:
+        card = self._card_shelf.get(owner_id, card_id)
+        if card is None:
+            return TelegramResponse("Эта карточка уже неактуальна. Нажмите «Темы» ещё раз.")
+        if action == "keep":
+            label = russian_headline(card.title, card.rubric)
+            self._card_shelf.keep(owner_id, label)
+            return TelegramResponse(f"{CARD_KEEP_PREFIX} {label}")
+        if action == "skip":
+            return TelegramResponse(CARD_SKIP_TEXT)
+        topic = russian_headline(card.title, card.rubric)
+        generated = await self._generate_studio(owner_id, StudioKind.SHORT, topic)
+        return TelegramResponse(
+            text=generated.text,
+            buttons=generated.buttons,
+            photo_url=digest_cover_url(topic),
+        )
+
+    def _ask_studio_topic(self, owner_id: int, kind: StudioKind) -> TelegramResponse:
+        self._studio_sessions.put(
+            owner_id, StudioSession(kind=kind, wait=StudioWait.TOPIC)
+        )
+        return TelegramResponse(_PROMPT_BY_KIND[kind], show_main_keyboard=True)
+
+    async def _generate_studio(
+        self, owner_id: int, kind: StudioKind, topic: str, *, note: str = "", variant: int = 1
+    ) -> TelegramResponse:
+        cleaned = topic.strip()
+        if not cleaned:
+            return TelegramResponse(_PROMPT_BY_KIND[kind])
+        if self._manual_post_store is None:
+            raise SafeError.for_code(SafeErrorCode.INVALID_TRANSITION)
+        body = self._studio_writer.write(
+            cleaned,
+            kind=kind,
+            variant=variant,
+            note=note,
+            tone_samples=self._owner_guide.tone_samples(owner_id),
+        )
+        post = ManualPost.create(owner_id=owner_id, topic=cleaned, body=body)
+        await self._manual_post_store.save(post)
+        self._studio_sessions.put(
+            owner_id,
+            StudioSession(
+                kind=kind,
+                wait=StudioWait.TOPIC,
+                topic=cleaned,
+                last_text=body,
+                variant=variant,
+                post_id=post.id,
+            ),
+        )
+        return TelegramResponse(
+            text=render_studio_text(body),
+            buttons=self._studio_buttons(post.id),
+        )
+
+    async def _revise_studio(
+        self, owner_id: int, session: StudioSession, note: str
+    ) -> TelegramResponse:
+        return await self._generate_studio(
+            owner_id,
+            session.kind,
+            session.topic,
+            note=note,
+            variant=session.variant + 1,
+        )
+
+    async def _handle_studio_callback(
+        self, owner_id: int, action: str, post_id: UUID
+    ) -> TelegramResponse:
+        session = self._studio_sessions.get(owner_id)
+        if action == "home":
+            self._studio_sessions.clear(owner_id)
+            return TelegramResponse(MAIN_MENU_TEXT, show_main_keyboard=True)
+        if action == "copy":
+            return TelegramResponse(
+                "",
+                toast="Зажмите сообщение с текстом и нажмите Копировать.",
+                skip_message=True,
+            )
+        if session is None or session.post_id != post_id:
+            if self._manual_post_store is None:
+                return _invalid_transition_response()
+            post = await self._manual_post_store.get(owner_id, post_id)
+            session = StudioSession(
+                kind=StudioKind.POST,
+                wait=StudioWait.TOPIC,
+                topic=post.topic,
+                last_text=post.body,
+                post_id=post.id,
+            )
+            self._studio_sessions.put(owner_id, session)
+        if action == "refine":
+            session.wait = StudioWait.REVISE
+            self._studio_sessions.put(owner_id, session)
+            return TelegramResponse(REVISE_PROMPT)
+        if action == "regen":
+            return await self._generate_studio(
+                owner_id,
+                session.kind,
+                session.topic,
+                variant=session.variant + 1,
+            )
+        return _invalid_transition_response()
+
+    def _studio_buttons(self, post_id: UUID) -> tuple[TelegramButton, ...]:
+        if self._callback_codec is None:
+            return ()
+        expires_at = self._clock() + self._callback_ttl
+        return tuple(
+            TelegramButton(
+                text=label,
+                callback_data=self._callback_codec.encode(action, post_id, expires_at=expires_at),
+            )
+            for action, label in (
+                ("refine", INLINE_REFINE),
+                ("regen", INLINE_REGEN),
+                ("reviewed", INLINE_REVIEWED),
+                ("publish_now", INLINE_PUBLISH),
+            )
+        )
+
     async def _create_draft(self, owner_id: int, topic: str) -> TelegramResponse:
         if not topic:
             return TelegramResponse(DRAFT_NEED_TOPIC)
@@ -221,7 +515,7 @@ class TelegramShell:
         await self._manual_post_store.save(post)
         return TelegramResponse(
             text=render_manual_draft(post),
-            buttons=self._manual_buttons(post.id, reviewed=False),
+            buttons=self._studio_buttons(post.id),
         )
 
     async def _review_latest(self, owner_id: int) -> TelegramResponse:
@@ -237,7 +531,7 @@ class TelegramShell:
         await self._manual_post_store.save(reviewed)
         return TelegramResponse(
             text=render_manual_reviewed(reviewed),
-            buttons=self._manual_buttons(reviewed.id, reviewed=True),
+            buttons=self._studio_buttons(reviewed.id),
         )
 
     async def _publish_latest(self, owner_id: int) -> TelegramResponse:
@@ -252,7 +546,7 @@ class TelegramShell:
         published = self._manual_post_policy.publish(post)
         await self._channel_publisher.publish(owner_id=post.owner_id, text=published.body)
         await self._manual_post_store.save(published)
-        return TelegramResponse(text=render_manual_published())
+        return TelegramResponse(text=render_manual_published(), show_main_keyboard=True)
 
     async def _handle_manual_callback(
         self, owner_id: int, action: str, post_id: UUID
@@ -264,33 +558,24 @@ class TelegramShell:
             return await self._review_post(post)
         return await self._publish_post(post)
 
-    def _manual_buttons(self, post_id: UUID, *, reviewed: bool) -> tuple[TelegramButton, ...]:
-        if self._callback_codec is None:
-            return ()
-        expires_at = self._clock() + self._callback_ttl
-        if reviewed:
-            return (
-                TelegramButton(
-                    text="Опубликовать в канал",
-                    callback_data=self._callback_codec.encode(
-                        "publish_now", post_id, expires_at=expires_at
-                    ),
-                ),
-            )
-        return (
-            TelegramButton(
-                text="Я проверила факты",
-                callback_data=self._callback_codec.encode(
-                    "reviewed", post_id, expires_at=expires_at
-                ),
-            ),
-        )
-
     @staticmethod
     def _owner_denial_or_safe_error(error: SafeError) -> TelegramResponse:
         if error.code is SafeErrorCode.OWNER_FORBIDDEN:
             return TelegramResponse(NEUTRAL_DENIAL)
         return TelegramResponse(render_safe_error(error))
+
+
+def _guide_response() -> TelegramResponse:
+    return TelegramResponse(
+        text=ONBOARDING_MESSAGES[0],
+        extra_messages=ONBOARDING_MESSAGES[1:],
+        show_main_keyboard=True,
+    )
+
+
+def _split_command(text: str) -> tuple[str, str]:
+    command, _, rest = text.strip().partition(" ")
+    return command.split("@", 1)[0], rest.strip()
 
 
 def _to_base36(value: int) -> str:

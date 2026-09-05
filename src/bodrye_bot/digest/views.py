@@ -2,9 +2,32 @@ from __future__ import annotations
 
 # ruff: noqa: E501
 from html import escape
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from bodrye_bot.digest.service import Digest, DigestCard
+from bodrye_bot.domain.headlines import (
+    russian_headline,
+    russian_rubric,
+    russian_source_name,
+    russian_summary,
+)
+
+
+def digest_cover_url(title: str) -> str:
+    prompt = (
+        "soft editorial still life, morning light, no people, no text, "
+        "no pills, no hospital, wellness atmosphere, "
+        + title.replace("\n", " ")[:70]
+    )
+    return (
+        "https://image.pollinations.ai/prompt/"
+        + quote(prompt, safe="")
+        + "?nologo=true&width=1024&height=1024"
+    )
+
+
+def first_source_url(card: DigestCard) -> str | None:
+    return next((url for url in card.provenance_urls if _owner_safe_url(url)), None)
 
 
 def render_digest(digest: Digest) -> str:
@@ -13,34 +36,43 @@ def render_digest(digest: Digest) -> str:
         body = "<b>Утренний дайджест</b>\nСегодня сильных тем не найдено."
     else:
         body = "<b>Утренний дайджест</b>\n\n" + "\n\n".join(
-            _render_card(card) for card in digest.cards
+            render_digest_card(card) for card in digest.cards
         )
-    if digest.source_failures:
-        body += "\n\n<b>Источники</b>\n" + "\n".join(
-            f"{escape(failure.source_name)}: {_failure_status(failure.safe_code)}"
-            for failure in digest.source_failures
-        )
-    return body
+    return body + _failures_html(digest)
 
 
-def _render_card(card: DigestCard) -> str:
-    source_links = " ".join(
-        f'<a href="{escape(url, quote=True)}">Источник</a>'
-        for url in card.provenance_urls
-        if _owner_safe_url(url)
+def render_digest_intro(digest: Digest) -> str:
+    if not digest.cards:
+        return render_digest(digest)
+    return (
+        "<b>Утренний дайджест</b>\n"
+        "Короткие карточки ниже. Это идеи, не публикация.\n"
+        "«Развить» — короткий черновик и обложка. «Сохранить» — отложить тему. "
+        "«Не интересно» — пропустить. «Источник» — открыть ссылку."
+        + _failures_html(digest)
     )
-    details = (
-        f"<b>{escape(card.title)}</b>\n"
-        f"{escape(card.summary)}\n"
-        f"Рубрика: {escape(card.rubric)}\n"
-        f"Дата: {card.published_at.strftime('%d.%m.%Y')}\n"
-        f"Роли источника: {escape(', '.join(str(role) for role in card.source_roles))}\n"
-        f"Почему важно: {escape(card.audience_reason)}\n"
-        f"Риск: {escape(card.preliminary_risk.value)}. {escape(card.selection_reason)}\n"
-        f"Оценка: {card.score:.2f}; компоненты: {escape(_components(card))}; версия: {escape(card.score_version)}\n"
-        f"Действия: {', '.join(escape(action) for action in card.actions)}"
+
+
+def render_digest_card(card: DigestCard) -> str:
+    title = russian_headline(card.title, card.rubric)
+    summary = russian_summary(card.title, card.rubric, card.summary)
+    if len(summary) > 280:
+        clipped = summary[:277].rsplit(" ", 1)[0]
+        summary = f"{clipped}…"
+    return (
+        f"<b>{escape(title)}</b>\n"
+        f"{escape(summary)}\n"
+        f"{escape(russian_rubric(card.rubric))} · {card.published_at.strftime('%d.%m.%Y')}"
     )
-    return f"{details}\n{source_links}" if source_links else details
+
+
+def _failures_html(digest: Digest) -> str:
+    if not digest.source_failures:
+        return ""
+    return "\n\n<b>Источники</b>\n" + "\n".join(
+        f"{escape(russian_source_name(failure.source_name))}: {_failure_status(failure.safe_code)}"
+        for failure in digest.source_failures
+    )
 
 
 def _owner_safe_url(url: str) -> bool:
@@ -53,10 +85,6 @@ def _owner_safe_url(url: str) -> bool:
     )
 
 
-def _components(card: DigestCard) -> str:
-    return ", ".join(f"{name}={value:.2f}" for name, value in sorted(card.score_components.items()))
-
-
 def _failure_status(code: str) -> str:
     return {
         "unavailable": "временно недоступен",
@@ -65,4 +93,10 @@ def _failure_status(code: str) -> str:
     }.get(code, "временно недоступен")
 
 
-__all__ = ["render_digest"]
+__all__ = [
+    "digest_cover_url",
+    "first_source_url",
+    "render_digest",
+    "render_digest_card",
+    "render_digest_intro",
+]
