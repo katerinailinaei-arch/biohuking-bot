@@ -195,6 +195,8 @@ def test_digest_view_shows_date_and_escapes_untrusted_source_content() -> None:
     assert "&lt;b&gt;не доверять&lt;/b&gt;" in rendered
     assert "javascript:" not in rendered
     assert "01.09.2026" in rendered
+    assert 'href="https://example.org/?a=&lt;bad&gt;"' in rendered
+    assert "Открыть источник" in rendered
 
 
 def test_first_source_url_skips_javascript_scheme() -> None:

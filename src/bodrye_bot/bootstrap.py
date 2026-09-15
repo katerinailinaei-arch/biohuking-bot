@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from bodrye_bot.config import Settings
+from bodrye_bot.db.base import async_session_factory
+from bodrye_bot.db.repositories.usage import SqlAlchemyUsageLedger
 from bodrye_bot.digest.worker import DigestWorker
 from bodrye_bot.editorial.memory import InMemoryManualPostStore
 from bodrye_bot.editorial.ports import ChannelPublisher
 from bodrye_bot.editorial.template_draft import TemplateDraftWriter
 from bodrye_bot.identity.service import OwnerGuard
+from bodrye_bot.operations.token_budget import InMemoryUsageLedger
+from bodrye_bot.ports.usage_ledger import UsageLedger
 from bodrye_bot.telegram.onboarding import OnboardingService, ReadinessCheck
 from bodrye_bot.telegram.owner_guide import FileOwnerGuide
 from bodrye_bot.telegram.router import CallbackCodec, TelegramShell
@@ -25,6 +29,7 @@ def build_telegram_shell(
     style_check: ReadinessCheck | None = None,
     channel_publisher: ChannelPublisher | None = None,
     digest_worker: DigestWorker | None = None,
+    usage_ledger: UsageLedger | None = None,
 ) -> TelegramShell:
     """Compose the owner shell and the short manual-publish path."""
     onboarding = OnboardingService(
@@ -44,11 +49,18 @@ def build_telegram_shell(
         channel_publisher=channel_publisher,
         digest_worker=digest_worker,
         owner_guide=FileOwnerGuide(Path("data") / "owner_guide.json"),
+        usage_ledger=usage_ledger,
     )
+
+
+def build_usage_ledger(settings: Settings) -> UsageLedger:
+    if settings.database_url is None:
+        return InMemoryUsageLedger()
+    return SqlAlchemyUsageLedger(async_session_factory(settings))
 
 
 async def _blocked() -> bool:
     return False
 
 
-__all__ = ["build_telegram_shell"]
+__all__ = ["build_telegram_shell", "build_usage_ledger"]

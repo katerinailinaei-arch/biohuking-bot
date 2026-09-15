@@ -33,7 +33,12 @@ def first_source_url(card: DigestCard) -> str | None:
 def render_digest(digest: Digest) -> str:
     """Render a strictly escaped owner-facing Telegram HTML digest."""
     if not digest.cards:
-        body = "<b>Утренний дайджест</b>\nСегодня сильных тем не найдено."
+        body = (
+            "<b>Утренний дайджест</b>\n"
+            "Перешлите сюда пост из канала-ориентира. "
+            "Перепишу идею своими словами — чужой текст и ролик в канал не копируем. "
+            "Список: /sources"
+        )
     else:
         body = "<b>Утренний дайджест</b>\n\n" + "\n\n".join(
             render_digest_card(card) for card in digest.cards
@@ -48,7 +53,7 @@ def render_digest_intro(digest: Digest) -> str:
         "<b>Утренний дайджест</b>\n"
         "Короткие карточки ниже. Это идеи, не публикация.\n"
         "«Развить» — короткий черновик и обложка. «Сохранить» — отложить тему. "
-        "«Не интересно» — пропустить. «Источник» — открыть ссылку."
+        "«Не интересно» — пропустить. «Открыть источник» — ссылка на статью."
         + _failures_html(digest)
     )
 
@@ -59,10 +64,15 @@ def render_digest_card(card: DigestCard) -> str:
     if len(summary) > 280:
         clipped = summary[:277].rsplit(" ", 1)[0]
         summary = f"{clipped}…"
+    source = first_source_url(card)
+    source_line = ""
+    if source is not None:
+        source_line = f'\n<a href="{escape(source, quote=True)}">Открыть источник</a>'
     return (
         f"<b>{escape(title)}</b>\n"
         f"{escape(summary)}\n"
         f"{escape(russian_rubric(card.rubric))} · {card.published_at.strftime('%d.%m.%Y')}"
+        f"{source_line}"
     )
 
 

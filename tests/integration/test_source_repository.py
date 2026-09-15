@@ -29,8 +29,8 @@ async def test_source_catalog_repository_seeds_loads_and_is_owner_scoped(
         with pytest.raises(SafeError) as caught:
             await uow.catalogs.get(999)
 
-    assert loaded.version == "source-registry-v1"
-    assert len(loaded.sources) == 10
+    assert loaded.version == "source-registry-v4"
+    assert len(loaded.sources) == len(SourceCatalog.initial().sources)
     assert caught.value.code is SafeErrorCode.OWNER_FORBIDDEN
 
 
@@ -50,7 +50,7 @@ async def test_versioned_query_update_persists_safe_audit_and_rolls_back_on_fail
     ).update_pubmed_queries(
         owner_id=42,
         current=current,
-        version="source-registry-v2",
+        version="source-registry-v5",
         queries=("activity", "sleep", "metabolism"),
     )
 
@@ -76,9 +76,9 @@ async def test_versioned_query_update_persists_safe_audit_and_rolls_back_on_fail
         "metabolism",
     }
     assert event.metadata_json == {
-        "registry_version": "source-registry-v2",
-        "pubmed_query_version": "pubmed-rss-v2",
-        "source_count": 10,
+        "registry_version": "source-registry-v5",
+        "pubmed_query_version": "pubmed-rss-v5",
+        "source_count": len(SourceCatalog.initial().sources),
     }
 
 
@@ -97,7 +97,7 @@ async def test_pubmed_update_round_trip_replaces_query_bearing_urls_without_stal
     ).update_pubmed_queries(
         owner_id=42,
         current=initial,
-        version="source-registry-v2",
+        version="source-registry-v5",
         queries=queries,
     )
 
@@ -113,7 +113,7 @@ async def test_pubmed_update_round_trip_replaces_query_bearing_urls_without_stal
     assert {item.canonical_url for item in loaded.sources} == {
         item.canonical_url for item in changed.sources
     }
-    assert len(loaded.sources) == 10
+    assert len(loaded.sources) == len(SourceCatalog.initial().sources)
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_pubmed_update_preserves_document_provenance_and_loads_only_curren
     ).update_pubmed_queries(
         owner_id=owner_id,
         current=initial,
-        version="source-registry-v2",
+        version="source-registry-v5",
         queries=queries,
     )
 
@@ -201,24 +201,25 @@ async def test_pubmed_update_preserves_document_provenance_and_loads_only_curren
     assert preserved_source.config_json["catalog_current"] is False
     assert (
         preserved_source.config_json["superseded_by_registry_version"]
-        == "source-registry-v2"
+        == "source-registry-v5"
     )
     assert preserved_document is not None
     assert preserved_document.owner_id == owner_id
     assert preserved_document.source_id == old_source_id
     assert all(source.owner_id == owner_id for source in owner_sources)
-    assert len(owner_sources) == 13
+    catalog_size = len(initial.sources)
+    assert len(owner_sources) == catalog_size + 3
     assert sum(
         source.config_json.get("catalog_current") is True for source in owner_sources
-    ) == 10
-    assert sum(source.status == "retired" for source in owner_sources) == 3
+    ) == catalog_size
+    assert sum(source.status == "retired" for source in owner_sources) == 13
     assert {
         source.canonical_url: source.id
         for source in owner_sources
         if source.source_type != "pubmed_rss"
     } == unchanged_ids
-    assert loaded.version == "source-registry-v2"
-    assert len(loaded.sources) == 10
+    assert loaded.version == "source-registry-v5"
+    assert len(loaded.sources) == catalog_size
     assert {
         source.config["query"]
         for source in loaded.sources
@@ -227,7 +228,7 @@ async def test_pubmed_update_preserves_document_provenance_and_loads_only_curren
     assert old_pubmed_url not in {source.canonical_url for source in loaded.sources}
     assert audit_event is not None
     assert audit_event.metadata_json == {
-        "registry_version": "source-registry-v2",
-        "pubmed_query_version": "pubmed-rss-v2",
-        "source_count": 10,
+        "registry_version": "source-registry-v5",
+        "pubmed_query_version": "pubmed-rss-v5",
+        "source_count": catalog_size,
     }

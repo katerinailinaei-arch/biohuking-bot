@@ -10,15 +10,16 @@ from bodrye_bot.sources.catalog import (
     SourceCatalog,
     SourceCatalogUpdater,
     SourceKind,
+    SourceStatus,
 )
 
 
 def test_catalog_seeds_versioned_approved_sources_with_pubmed_queries():
     """Break caught: a registry edit drops provenance or one approved topic feed."""
     catalog = SourceCatalog.initial()
+    names = {source.name for source in catalog.sources}
 
-    assert catalog.version == "source-registry-v1"
-    assert len(catalog.sources) == 10
+    assert catalog.version == "source-registry-v4"
     assert {source.name for source in catalog.sources} >= {
         "Минздрав РФ: клинические рекомендации",
         "WHO Fact Sheets",
@@ -26,10 +27,48 @@ def test_catalog_seeds_versioned_approved_sources_with_pubmed_queries():
         "USPSTF",
         "NICE",
         "Cochrane Reviews",
+        "N+1",
+        "Naked Science",
+        "MedlinePlus: новое о здоровье",
+        "The Conversation: Health",
     }
     pubmed = [source for source in catalog.sources if source.kind is SourceKind.PUBMED_RSS]
     assert len(pubmed) == 3
     assert {source.config["query_version"] for source in pubmed} == {"pubmed-rss-v1"}
+    assert all(source.status is SourceStatus.RETIRED for source in pubmed)
+    topic_rss = [
+        source
+        for source in catalog.sources
+        if source.kind is SourceKind.WEB and source.access_method is AccessMethod.RSS
+    ]
+    assert len(topic_rss) == 5
+    assert all(source.status is SourceStatus.RETIRED for source in topic_rss)
+    assert catalog.inspiration_telegram_handles() >= {
+        "kollegi_joke",
+        "easyzozh",
+        "haloareyouhealthy",
+        "vremya_zhit_now",
+        "shkarupaendo",
+    }
+    assert catalog.blocked_telegram_handles() == frozenset({"schroodingercat"})
+    assert names >= {
+        "Telegram: Коллеги, шутки кончились",
+        "Telegram: Кот Шрёдингера (агрегатор) — запрещён",
+        "Telegram: Фитнес меню — запрещён",
+    }
+    blocked = [
+        source
+        for source in catalog.sources
+        if source.canonical_url
+        in {"https://t.me/SchroodingerCat", "https://t.me/+sKU7kz_opcplNzY6"}
+    ]
+    assert len(blocked) == 2
+    assert all(source.status is SourceStatus.RETIRED for source in blocked)
+    assert all(
+        SourceRole.EVIDENCE not in source.roles
+        for source in catalog.sources
+        if source.kind is SourceKind.TELEGRAM_MANUAL
+    )
     assert all(source.checked_at is not None for source in catalog.sources)
     assert all(source.license_note for source in catalog.sources)
     assert all(source.allowed_hosts for source in catalog.sources if source.is_evidence)
@@ -98,17 +137,17 @@ async def test_owner_update_persists_new_catalog_version_and_redacted_audit_atom
     changed = await SourceCatalogUpdater(uow=uow).update_pubmed_queries(
         owner_id=42,
         current=SourceCatalog.initial(),
-        version="source-registry-v2",
+        version="source-registry-v5",
         queries=("activity", "sleep", "metabolism"),
     )
 
-    assert changed.version == "source-registry-v2"
+    assert changed.version == "source-registry-v5"
     assert uow.committed is True
     assert uow.catalogs.saved == [(42, changed)]
     assert uow.audit.recorded[0].metadata == {
-        "registry_version": "source-registry-v2",
-        "pubmed_query_version": "pubmed-rss-v2",
-        "source_count": 10,
+        "registry_version": "source-registry-v5",
+        "pubmed_query_version": "pubmed-rss-v5",
+        "source_count": len(SourceCatalog.initial().sources),
     }
 
 
@@ -147,7 +186,7 @@ async def test_owner_update_rolls_back_save_if_audit_fails():
         await SourceCatalogUpdater(uow=uow).update_pubmed_queries(
             owner_id=42,
             current=SourceCatalog.initial(),
-            version="source-registry-v2",
+            version="source-registry-v5",
             queries=("activity", "sleep", "metabolism"),
         )
 
@@ -172,6 +211,6 @@ async def test_query_update_rejects_nonexact_query_tuple_before_persistence(quer
         await SourceCatalogUpdater(uow=Uow()).update_pubmed_queries(  # type: ignore[arg-type]
             owner_id=42,
             current=SourceCatalog.initial(),
-            version="source-registry-v2",
+            version="source-registry-v5",
             queries=queries,  # type: ignore[arg-type]
         )

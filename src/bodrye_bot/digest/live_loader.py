@@ -1,27 +1,30 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 from html import unescape
-from json import loads
 from re import sub
 from time import struct_time
-from urllib.parse import quote_plus
+from urllib.parse import urlsplit
 
 import feedparser  # type: ignore[import-untyped]
 
 from bodrye_bot.digest.service import DigestCandidate, PreliminaryRisk, SourceFailure
 from bodrye_bot.domain.common import content_hash
-from bodrye_bot.domain.headlines import russian_summary
 from bodrye_bot.domain.sources import SourceRole
-from bodrye_bot.sources.catalog import AccessMethod, SourceCatalog, SourceKind, SourceStatus
+from bodrye_bot.sources.catalog import (
+    AccessMethod,
+    SourceCatalog,
+    SourceDefinition,
+    SourceKind,
+    SourceStatus,
+)
 
 PageGet = Callable[[str], Awaitable[str]]
-_EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
 
 class CatalogRssLoader:
-    """Load topic cards from allowlisted PubMed queries via NCBI E-utilities or RSS."""
+    """Load topic cards from allowlisted public RSS feeds."""
 
     def __init__(
         self,
@@ -39,16 +42,13 @@ class CatalogRssLoader:
         candidates: list[DigestCandidate] = []
         failures: list[SourceFailure] = []
         for source in self._catalog.sources:
-            if source.status is not SourceStatus.ACTIVE:
+            if source.kind is SourceKind.PUBMED_RSS:
                 continue
-            if source.kind is not SourceKind.PUBMED_RSS:
+            if source.status is not SourceStatus.ACTIVE:
                 continue
             if source.access_method is not AccessMethod.RSS:
                 continue
-            query = str(source.config.get("query", "")).strip()
-            cards, failure = await _load_source(
-                self._getter, source.name, source.canonical_url, query
-            )
+            cards, failure = await _load_source(self._getter, source)
             candidates.extend(cards)
             if failure is not None:
                 failures.append(failure)
@@ -56,65 +56,17 @@ class CatalogRssLoader:
 
 
 async def _load_source(
-    getter: PageGet, name: str, url: str, query: str
+    getter: PageGet, source: SourceDefinition
 ) -> tuple[tuple[DigestCandidate, ...], SourceFailure | None]:
     try:
-        first = await getter(_esearch_url(query) if query else url)
-        if _looks_like_json(first):
-            ids = _pmids(first)
-            if not ids:
-                return (), None
-            summary = await getter(_esummary_url(ids))
-            return _candidates_from_summary(name, summary)[:4], None
-        return _candidates_from_feed(name, first)[:4], None
+        feed_url = str(source.config.get("feed_url", "")).strip()
+        target = feed_url or source.canonical_url
+        return _candidates_from_feed(source, await getter(target))[:4], None
     except Exception:
-        return (), SourceFailure(name, "source_unavailable")
+        return (), SourceFailure(source.name, "source_unavailable")
 
 
-def _esearch_url(query: str) -> str:
-    return (
-        f"{_EUTILS}/esearch.fcgi?db=pubmed&retmode=json&retmax=4"
-        f"&sort=date&term={quote_plus(query)}&tool=bodrye-bot"
-    )
-
-
-def _esummary_url(ids: tuple[str, ...]) -> str:
-    joined = ",".join(ids)
-    return f"{_EUTILS}/esummary.fcgi?db=pubmed&retmode=json&id={joined}&tool=bodrye-bot"
-
-
-def _looks_like_json(payload: str) -> bool:
-    return payload.lstrip().startswith("{")
-
-
-def _pmids(payload: str) -> tuple[str, ...]:
-    parsed = loads(payload)
-    result = parsed.get("esearchresult")
-    if not isinstance(result, dict) or "idlist" not in result:
-        raise ValueError("ncbi esearch rejected query")
-    raw = result["idlist"]
-    return tuple(str(item) for item in raw if str(item).isdigit())
-
-
-def _candidates_from_summary(source_name: str, payload: str) -> tuple[DigestCandidate, ...]:
-    parsed = loads(payload)
-    result = parsed.get("result")
-    if not isinstance(result, dict):
-        raise ValueError("ncbi esummary rejected query")
-    cards: list[DigestCandidate] = []
-    for pmid in result.get("uids", ()):
-        record = result.get(str(pmid))
-        if not isinstance(record, Mapping):
-            continue
-        title = _plain(str(record.get("title", "")))
-        link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-        if not title:
-            continue
-        cards.append(_card(source_name, title, link, _summary_date(record)))
-    return tuple(cards)
-
-
-def _candidates_from_feed(source_name: str, xml: str) -> tuple[DigestCandidate, ...]:
+def _candidates_from_feed(source: SourceDefinition, xml: str) -> tuple[DigestCandidate, ...]:
     parsed = feedparser.parse(xml)
     cards: list[DigestCandidate] = []
     for entry in parsed.entries:
@@ -122,10 +74,26 @@ def _candidates_from_feed(source_name: str, xml: str) -> tuple[DigestCandidate, 
         title = _plain(str(getattr(entry, "title", "") or ""))
         if not link.startswith("http") or not title:
             continue
+        if not _host_allowed(link, source.allowed_hosts):
+            continue
         cards.append(
-            _card(source_name, title, link, _published(entry), _entry_summary(entry))
+            _card(
+                source.name,
+                title,
+                link,
+                _published(entry),
+                _entry_summary(entry),
+            )
         )
     return tuple(cards)
+
+
+def _host_allowed(link: str, allowed: tuple[str, ...]) -> bool:
+    host = (urlsplit(link).hostname or "").lower().rstrip(".")
+    if not host or not allowed:
+        return False
+    needles = tuple(item.lower().rstrip(".") for item in allowed)
+    return any(host == needle or host.endswith(f".{needle}") for needle in needles)
 
 
 def _card(
@@ -140,15 +108,15 @@ def _card(
         content_hash=content_hash(f"{link}\n{title}"),
         topic_fingerprint=_fingerprint(title),
         title=title[:200],
-        summary=russian_summary(title, source_name, summary),
+        summary=_source_blurb(title, summary),
         rubric=source_name,
         published_at=published_at,
-        audience_reason=("Тема из разрешённого PubMed; Кети решает, брать ли её в выпуск."),
+        audience_reason="Тема из разрешённой ленты. Чужой текст не копируем — пишем свой пост.",
         source_roles=(SourceRole.TOPIC,),
         relevance=0.86,
         freshness=0.88,
-        source_authority=0.9,
-        audience_fit=0.84,
+        source_authority=0.78,
+        audience_fit=0.88,
         novelty=0.8,
         preliminary_risk=PreliminaryRisk.GREEN,
     )
@@ -156,16 +124,6 @@ def _card(
 
 def _entry_summary(entry: object) -> str:
     return _plain(str(getattr(entry, "summary", "") or ""))
-
-
-def _summary_date(record: Mapping[str, object]) -> date:
-    raw = str(record.get("sortpubdate") or record.get("pubdate") or "")
-    match = sub(r"^(\d{4}).*", r"\1", raw)
-    try:
-        year = int(match[:4])
-        return date(year, 1, 1)
-    except ValueError:
-        return datetime.now(UTC).date()
 
 
 def _published(entry: object) -> date:
@@ -178,6 +136,15 @@ def _published(entry: object) -> date:
 def _plain(value: str) -> str:
     text = unescape(sub(r"<[^>]+>", " ", value))
     return sub(r"\s+", " ", text).strip()
+
+
+def _source_blurb(title: str, summary: str) -> str:
+    raw = (summary or title).strip()
+    parts = [part.strip() for part in sub(r"[!?]", ".", raw).split(".") if part.strip()]
+    head = parts[:2] if parts else [title[:180] or "Тема"]
+    if len(head) == 1:
+        head.append("Тема для канала, не диагноз")
+    return ". ".join(head) + "."
 
 
 def _fingerprint(title: str) -> str:

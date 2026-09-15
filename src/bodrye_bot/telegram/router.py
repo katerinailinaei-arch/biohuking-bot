@@ -20,6 +20,9 @@ from bodrye_bot.domain.workflow import Actor, WorkflowPolicy, WorkflowState, Wor
 from bodrye_bot.editorial.ports import ChannelPublisher, DraftWriter, ManualPostStore
 from bodrye_bot.editorial.studio import StudioKind, StudioWriter
 from bodrye_bot.identity.service import OwnerGuard
+from bodrye_bot.operations.token_budget import render_token_budget, summarize_token_calls
+from bodrye_bot.ports.usage_ledger import UsageLedger
+from bodrye_bot.sources.catalog import SourceCatalog
 from bodrye_bot.telegram.onboarding import OnboardingService
 from bodrye_bot.telegram.owner_guide import InMemoryOwnerGuide, OwnerGuide
 from bodrye_bot.telegram.studio_state import StudioSession, StudioSessionStore, StudioWait
@@ -27,11 +30,14 @@ from bodrye_bot.telegram.views import (
     CARD_KEEP_PREFIX,
     CARD_SKIP_TEXT,
     DRAFT_NEED_TOPIC,
+    FORWARD_BLOCKED,
+    FORWARD_INSPIRATION,
     INLINE_PUBLISH,
     INLINE_REFINE,
     INLINE_REGEN,
     INLINE_REVIEWED,
     MAIN_MENU_TEXT,
+    MENU_BUDGET,
     MENU_HELP,
     MENU_POST,
     MENU_PUBLISH,
@@ -46,6 +52,7 @@ from bodrye_bot.telegram.views import (
     SETTOV_NEED_SAMPLE,
     SETTOV_PROMPT,
     SETTOV_SAVED,
+    SOURCES_LIST,
     STUDIO_PROMPTS,
     render_manual_draft,
     render_manual_published,
@@ -86,6 +93,7 @@ _TOPICS_LABELS = frozenset({MENU_TOPICS, "Темы"})
 _REVIEWED_LABELS = frozenset({MENU_REVIEWED, "Я проверила"})
 _PUBLISH_LABELS = frozenset({MENU_PUBLISH, "В канал"})
 _HELP_LABELS = frozenset({MENU_HELP, "Помощь", "/help"})
+_BUDGET_LABELS = frozenset({MENU_BUDGET, "Бюджет", "/costs"})
 _DONE_PHRASES = frozenset({"готово", "готово.", "достаточно"})
 _LOG = logging.getLogger(__name__)
 
@@ -95,6 +103,7 @@ class IncomingMessage:
     sender_id: int
     text: str
     transcribed: bool = False
+    forward_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +208,7 @@ class TelegramShell:
         studio_sessions: StudioSessionStore | None = None,
         card_shelf: DigestCardShelf | None = None,
         owner_guide: OwnerGuide | None = None,
+        usage_ledger: UsageLedger | None = None,
     ) -> None:
         self._owner_guard = owner_guard
         self._onboarding = onboarding if onboarding is not None else OnboardingService()
@@ -220,12 +230,15 @@ class TelegramShell:
         )
         self._card_shelf = card_shelf if card_shelf is not None else CARD_SHELF
         self._owner_guide = owner_guide if owner_guide is not None else InMemoryOwnerGuide()
+        self._usage_ledger = usage_ledger
 
     async def handle(self, message: IncomingMessage) -> TelegramResponse:
         try:
             owner_id = self._owner_guard.authorize(message.sender_id)
             if message.text.strip().lower().startswith("python"):
                 return TelegramResponse(PYTHON_IN_CHAT)
+            if message.forward_from is not None:
+                return self._inspiration_forward(message.forward_from)
             label = message.text.strip()
             if label in _TOPICS_LABELS:
                 return await self._send_digest()
@@ -235,6 +248,8 @@ class TelegramShell:
                 return await self._publish_latest(owner_id)
             if label in _HELP_LABELS:
                 return _guide_response()
+            if label in _BUDGET_LABELS:
+                return await self._budget(owner_id)
             menu_kind = _MENU_KIND.get(label)
             if menu_kind is not None:
                 return self._ask_studio_topic(owner_id, menu_kind)
@@ -271,18 +286,24 @@ class TelegramShell:
             text = {
                 "/status": "Статус проверяется в рабочем контуре.",
                 "/settings": "Настройки доступны только через безопасные шаги мастера.",
-                "/sources": "Разрешённые источники будут показаны после проверки доступа.",
+                "/sources": SOURCES_LIST,
                 "/style": (
                     "Профиль стиля доступен после калибровки. "
                     "Для живого тона используйте /settov."
                 ),
-                "/costs": "Использование будет показано после подключения учёта.",
             }.get(command, "Не удалось распознать команду. Используйте меню внизу или /help.")
             return TelegramResponse(text=text)
         except SafeError as error:
             return self._owner_denial_or_safe_error(error)
         except Exception as error:
             return _internal_error_response("message", error)
+
+    def _inspiration_forward(self, handle: str) -> TelegramResponse:
+        catalog = SourceCatalog.initial()
+        cleaned = handle.strip().lstrip("@").lower()
+        if cleaned in catalog.blocked_telegram_handles():
+            return TelegramResponse(FORWARD_BLOCKED, show_main_keyboard=True)
+        return TelegramResponse(FORWARD_INSPIRATION, show_main_keyboard=True)
 
     async def handle_callback(self, callback: IncomingCallback) -> TelegramResponse:
         try:
@@ -321,6 +342,13 @@ class TelegramShell:
         if payload.action == "approve":
             return TelegramResponse("Черновик утверждён после повторной проверки состояния.")
         return TelegramResponse("Действие подтверждено после повторной проверки состояния.")
+
+    async def _budget(self, owner_id: int) -> TelegramResponse:
+        if self._usage_ledger is None:
+            text = render_token_budget(summarize_token_calls(()))
+        else:
+            text = render_token_budget(await self._usage_ledger.for_owner(owner_id))
+        return TelegramResponse(text, show_main_keyboard=True)
 
     async def _start(self, owner_id: int) -> TelegramResponse:
         result = await self._onboarding.check()
@@ -375,7 +403,8 @@ class TelegramShell:
         return TelegramResponse(
             "Дайджест отправил отдельным сообщением в этот чат. "
             "«Развить» — черновик, «Сохранить» — отложить, «Не интересно» — пропустить, "
-            "«Источник» — открыть ссылку. В канал ничего не публикуется, пока вы не нажмёте "
+            "«Открыть источник» — ссылка на статью. "
+            "В канал ничего не публикуется, пока вы не нажмёте "
             f"«{MENU_REVIEWED}» и «{MENU_PUBLISH}»."
         )
 

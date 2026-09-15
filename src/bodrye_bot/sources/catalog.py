@@ -72,10 +72,22 @@ class SourceCatalog:
 
     @classmethod
     def initial(cls) -> SourceCatalog:
-        checked_at = datetime(2026, 8, 28, tzinfo=UTC)
+        checked_at = datetime(2026, 9, 7, tzinfo=UTC)
         standard = "Registry metadata checked during onboarding; follow publisher terms."
+        title_link_only = (
+            "Digest may use the public RSS title and canonical link only. "
+            "Do not copy article body, photos, video, or jokes. Write original posts."
+        )
+        telegram_forward = (
+            "Owner-forwarded message or explicit link only. "
+            "No scraping, no republication, no evidence role."
+        )
+        telegram_blocked = (
+            "Blocked: no copy, scrape, or digest ingest. "
+            "Public or invite Telegram is not a license to reuse content."
+        )
         return cls(
-            version="source-registry-v1",
+            version="source-registry-v4",
             sources=(
                 _web(
                     "Минздрав РФ: клинические рекомендации",
@@ -99,16 +111,15 @@ class SourceCatalog:
                     checked_at,
                     standard,
                 ),
-                _web(
+                _rss_topic(
                     "WHO News",
                     "https://www.who.int/news",
-                    (SourceRole.TOPIC,),
-                    AccessMethod.FETCH,
-                    SourceStatus.ACTIVE,
-                    "who-news-v1",
-                    "www.who.int",
+                    "https://www.who.int/rss-feeds/news-english.xml",
+                    "who-news-v2",
+                    ("www.who.int", "who.int"),
                     checked_at,
-                    standard,
+                    title_link_only,
+                    SourceStatus.RETIRED,
                 ),
                 _web(
                     "USPSTF",
@@ -143,6 +154,47 @@ class SourceCatalog:
                     checked_at,
                     standard,
                 ),
+                _rss_topic(
+                    "MedlinePlus: новое о здоровье",
+                    "https://medlineplus.gov/",
+                    "https://medlineplus.gov/feeds/whatsnew.xml",
+                    "medlineplus-v1",
+                    ("medlineplus.gov", "www.medlineplus.gov"),
+                    checked_at,
+                    "U.S. government health pages; title and link for topics, "
+                    "not medical evidence.",
+                    SourceStatus.RETIRED,
+                ),
+                _rss_topic(
+                    "N+1",
+                    "https://nplus1.ru/",
+                    "https://nplus1.ru/rss",
+                    "nplus1-v1",
+                    ("nplus1.ru", "www.nplus1.ru"),
+                    checked_at,
+                    title_link_only,
+                    SourceStatus.RETIRED,
+                ),
+                _rss_topic(
+                    "Naked Science",
+                    "https://naked-science.ru/",
+                    "https://naked-science.ru/feed",
+                    "naked-science-v1",
+                    ("naked-science.ru", "www.naked-science.ru"),
+                    checked_at,
+                    title_link_only,
+                    SourceStatus.RETIRED,
+                ),
+                _rss_topic(
+                    "The Conversation: Health",
+                    "https://theconversation.com/uk/health",
+                    "https://theconversation.com/uk/health/articles.atom",
+                    "conversation-health-v1",
+                    ("theconversation.com", "www.theconversation.com"),
+                    checked_at,
+                    title_link_only + " Attribution required if quoting a short excerpt.",
+                    SourceStatus.RETIRED,
+                ),
                 _pubmed(
                     "движение и активное долголетие",
                     "physical activity AND healthy aging",
@@ -156,22 +208,99 @@ class SourceCatalog:
                     checked_at,
                     standard,
                 ),
-                SourceDefinition(
-                    name="Telegram: вручную утверждённые источники",
-                    canonical_url="https://t.me/",
-                    kind=SourceKind.TELEGRAM_MANUAL,
-                    roles=(SourceRole.TOPIC, SourceRole.FORMAT, SourceRole.ANTI_EXAMPLE),
-                    access_method=AccessMethod.OWNER_FORWARDED_OR_EXPLICIT_LINK,
-                    status=SourceStatus.MANUAL,
-                    version="telegram-manual-v1",
-                    license_note=(
-                        "Only owner-forwarded messages or explicit links; "
-                        "no scraping or credentials."
-                    ),
-                    checked_at=checked_at,
-                    allowed_hosts=("t.me",),
+                _telegram(
+                    "Telegram: любой пост от Кети",
+                    "https://t.me/",
+                    SourceStatus.MANUAL,
+                    "telegram-manual-v2",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.TOPIC, SourceRole.FORMAT, SourceRole.ANTI_EXAMPLE),
+                ),
+                _telegram(
+                    "Telegram: Коллеги, шутки кончились",
+                    "https://t.me/kollegi_joke",
+                    SourceStatus.MANUAL,
+                    "telegram-kollegi-v1",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.FORMAT, SourceRole.ANTI_EXAMPLE),
+                ),
+                _telegram(
+                    "Telegram: лёгкий зож",
+                    "https://t.me/easyzozh",
+                    SourceStatus.MANUAL,
+                    "telegram-easyzozh-v1",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.TOPIC, SourceRole.FORMAT),
+                ),
+                _telegram(
+                    "Telegram: Хало, а ю хелси?",
+                    "https://t.me/haloareyouhealthy",
+                    SourceStatus.MANUAL,
+                    "telegram-halo-v1",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.TOPIC, SourceRole.FORMAT),
+                ),
+                _telegram(
+                    "Telegram: ВРЕМЯ ЖИТЬ",
+                    "https://t.me/vremya_zhit_now",
+                    SourceStatus.MANUAL,
+                    "telegram-vremya-zhit-v1",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.TOPIC, SourceRole.FORMAT),
+                ),
+                _telegram(
+                    "Telegram: СЪЕШЬТЕ ЭТО МЕДЛЕННО",
+                    "https://t.me/shkarupaendo",
+                    SourceStatus.MANUAL,
+                    "telegram-shkarupa-v1",
+                    checked_at,
+                    telegram_forward,
+                    (SourceRole.FORMAT, SourceRole.ANTI_EXAMPLE),
+                ),
+                _telegram(
+                    "Telegram: Кот Шрёдингера (агрегатор) — запрещён",
+                    "https://t.me/SchroodingerCat",
+                    SourceStatus.RETIRED,
+                    "telegram-schroodingercat-blocked-v1",
+                    checked_at,
+                    telegram_blocked,
+                    (SourceRole.ANTI_EXAMPLE,),
+                ),
+                _telegram(
+                    "Telegram: Фитнес меню — запрещён",
+                    "https://t.me/+sKU7kz_opcplNzY6",
+                    SourceStatus.RETIRED,
+                    "telegram-fitness-menu-blocked-v1",
+                    checked_at,
+                    telegram_blocked,
+                    (SourceRole.ANTI_EXAMPLE,),
                 ),
             ),
+        )
+
+    def blocked_telegram_handles(self) -> frozenset[str]:
+        return frozenset(
+            handle
+            for source in self.sources
+            if source.kind is SourceKind.TELEGRAM_MANUAL
+            and source.status is SourceStatus.RETIRED
+            for handle in (_telegram_handle(source.canonical_url),)
+            if handle
+        )
+
+    def inspiration_telegram_handles(self) -> frozenset[str]:
+        return frozenset(
+            handle
+            for source in self.sources
+            if source.kind is SourceKind.TELEGRAM_MANUAL
+            and source.status is SourceStatus.MANUAL
+            for handle in (_telegram_handle(source.canonical_url),)
+            if handle
         )
 
 
@@ -281,16 +410,75 @@ def _web(
     )
 
 
+def _rss_topic(
+    name: str,
+    canonical_url: str,
+    feed_url: str,
+    version: str,
+    allowed_hosts: tuple[str, ...],
+    checked_at: datetime,
+    license_note: str,
+    status: SourceStatus = SourceStatus.ACTIVE,
+) -> SourceDefinition:
+    return SourceDefinition(
+        name=name,
+        canonical_url=canonical_url,
+        kind=SourceKind.WEB,
+        roles=(SourceRole.TOPIC,),
+        access_method=AccessMethod.RSS,
+        status=status,
+        version=version,
+        license_note=license_note,
+        checked_at=checked_at,
+        allowed_hosts=allowed_hosts,
+        config={"feed_url": feed_url},
+    )
+
+
+def _telegram_handle(canonical_url: str) -> str | None:
+    prefix = "https://t.me/"
+    if not canonical_url.startswith(prefix):
+        return None
+    rest = canonical_url[len(prefix) :].split("/", 1)[0].strip()
+    if not rest or rest.startswith("+"):
+        return None
+    return rest.lower()
+
+
+def _telegram(
+    name: str,
+    canonical_url: str,
+    status: SourceStatus,
+    version: str,
+    checked_at: datetime,
+    license_note: str,
+    roles: tuple[SourceRole, ...],
+) -> SourceDefinition:
+    return SourceDefinition(
+        name=name,
+        canonical_url=canonical_url,
+        kind=SourceKind.TELEGRAM_MANUAL,
+        roles=roles,
+        access_method=AccessMethod.OWNER_FORWARDED_OR_EXPLICIT_LINK,
+        status=status,
+        version=version,
+        license_note=license_note,
+        checked_at=checked_at,
+        allowed_hosts=("t.me",),
+    )
+
+
 def _pubmed(name: str, query: str, checked_at: datetime, license_note: str) -> SourceDefinition:
+    del license_note
     return SourceDefinition(
         f"PubMed RSS: {name}",
         _pubmed_url(query),
         SourceKind.PUBMED_RSS,
         (SourceRole.TOPIC,),
         AccessMethod.RSS,
-        SourceStatus.ACTIVE,
+        SourceStatus.RETIRED,
         "pubmed-rss-v1",
-        license_note,
+        "Owner cancelled PubMed: not used for digest or topic search.",
         checked_at,
         ("pubmed.ncbi.nlm.nih.gov",),
         {"query_version": "pubmed-rss-v1", "query": query},

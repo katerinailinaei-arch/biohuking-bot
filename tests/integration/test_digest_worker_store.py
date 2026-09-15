@@ -79,7 +79,7 @@ async def test_empty_digest_worker_store_delivers_once_and_persists_owner_date_t
     assert len(telegram.calls) == 1
     assert telegram.calls[0][0] == owner_id
     assert "Утренний дайджест" in telegram.calls[0][1]
-    assert "Сегодня сильных тем не найдено" in telegram.calls[0][1]
+    assert "канала-ориентира" in telegram.calls[0][1]
     assert "ВОЗ: временно недоступен" in telegram.calls[0][1]
     assert record.owner_id == owner_id
     assert record.digest_date == digest_date

@@ -13,10 +13,12 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     Message,
+    MessageOriginChannel,
+    MessageOriginChat,
     ReplyKeyboardMarkup,
 )
 
-from bodrye_bot.bootstrap import build_telegram_shell
+from bodrye_bot.bootstrap import build_telegram_shell, build_usage_ledger
 from bodrye_bot.config import Settings, get_settings
 from bodrye_bot.digest.runtime import build_digest_worker, pulse_digest
 from bodrye_bot.digest.worker import DigestWorker
@@ -33,6 +35,7 @@ from bodrye_bot.telegram.router import (
     TelegramShell,
 )
 from bodrye_bot.telegram.views import (
+    MENU_BUDGET,
     MENU_HELP,
     MENU_POST,
     MENU_PUBLISH,
@@ -49,7 +52,7 @@ _MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=MENU_TOPICS), KeyboardButton(text=MENU_POST)],
         [KeyboardButton(text=MENU_REVIEWED), KeyboardButton(text=MENU_PUBLISH)],
-        [KeyboardButton(text=MENU_HELP)],
+        [KeyboardButton(text=MENU_BUDGET), KeyboardButton(text=MENU_HELP)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -58,6 +61,7 @@ _DIGEST_STARTERS = frozenset({"/digest", MENU_TOPICS, "Темы"})
 _BOT_COMMANDS = (
     BotCommand(command="start", description="Меню. Для новых — инструкция из 3 сообщений"),
     BotCommand(command="help", description="Помощь: как пользоваться ботом"),
+    BotCommand(command="costs", description="Сколько токенов потратил бот"),
     BotCommand(command="settov", description="Загрузить свой тон (примеры постов)"),
     BotCommand(command="digest", description="Прислать темы сейчас"),
     BotCommand(command="draft", description="Черновик: /draft тема"),
@@ -113,11 +117,17 @@ def create_router(
         if clip is not None:
             await _handle_audio(message, sender_id, clip)
             return
-        text = message.text or ""
+        text = message.text or message.caption or ""
         command = text.strip().split(" ", 1)[0].split("@", 1)[0]
         if command in _DIGEST_STARTERS or text.strip() in _DIGEST_STARTERS:
             await message.answer(TOPICS_WAIT_TEXT)
-        response = await shell.handle(IncomingMessage(sender_id=sender_id, text=text))
+        response = await shell.handle(
+            IncomingMessage(
+                sender_id=sender_id,
+                text=text,
+                forward_from=_forward_handle(message),
+            )
+        )
         await _send_response(message, response)
 
     async def _handle_audio(message: Message, sender_id: int, clip: Any) -> None:
@@ -157,13 +167,31 @@ def create_router(
     return router
 
 
+def _forward_handle(message: Message) -> str | None:
+    origin = message.forward_origin
+    chat = None
+    if isinstance(origin, MessageOriginChannel):
+        chat = origin.chat
+    elif isinstance(origin, MessageOriginChat):
+        chat = origin.sender_chat
+    elif message.forward_from_chat is not None:
+        chat = message.forward_from_chat
+    if chat is not None:
+        username = getattr(chat, "username", None)
+        return str(username) if username else ""
+    if origin is not None or message.forward_date is not None:
+        return ""
+    return None
+
+
 def create_application(settings: Settings) -> tuple[Bot, Dispatcher, DigestWorker]:
     bot = Bot(
         token=settings.telegram_bot_token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
-    digest_worker = build_digest_worker(settings, bot)
+    usage_ledger = build_usage_ledger(settings)
+    digest_worker = build_digest_worker(settings, bot, usage_ledger=usage_ledger)
     transcriber = None
     if settings.deepgram_api_key is not None:
         transcriber = DeepgramTranscriber(settings.deepgram_api_key)
@@ -171,6 +199,7 @@ def create_application(settings: Settings) -> tuple[Bot, Dispatcher, DigestWorke
         settings,
         channel_publisher=AiogramChannelPublisher(bot, settings.telegram_channel_id),
         digest_worker=digest_worker,
+        usage_ledger=usage_ledger,
     )
     dispatcher.include_router(
         create_router(

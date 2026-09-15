@@ -52,3 +52,36 @@ def test_digest_card_hides_english_source_title() -> None:
 
     assert _latin_words(visible) == []
     assert "движен" in visible.lower() or "активн" in visible.lower()
+
+
+def test_scientific_pubmed_title_is_not_shown_in_english() -> None:
+    title = (
+        "Hepatic cytochrome P450 induction following Kashin-Beck "
+        "disease-related selenium deficiency and T-2 toxin exposure in mice."
+    )
+    card = DigestCard(
+        title=title,
+        topic_fingerprint="selenium",
+        summary="Исследование: " + title + " Кети решает, развивать ли тему в канале.",
+        rubric="PubMed RSS: питание и метаболическое здоровье",
+        published_at=date(2026, 1, 1),
+        audience_reason="x",
+        provenance_urls=("https://pubmed.ncbi.nlm.nih.gov/1/",),
+        source_roles=(SourceRole.TOPIC,),
+        preliminary_risk=PreliminaryRisk.GREEN,
+        score=0.9,
+        raw_score=0.9,
+        score_components={},
+        scoring_snapshot={},
+        score_version="test-v1",
+        selection_reason="выбрано",
+    )
+
+    visible = re.sub(r"<[^>]+>", " ", render_digest_card(card))
+    html = render_digest_card(card)
+
+    assert _latin_words(visible) == []
+    assert "Hepatic" not in visible
+    assert "cytochrome" not in visible
+    assert "PubMed RSS" not in visible
+    assert '<a href="https://pubmed.ncbi.nlm.nih.gov/1/">Открыть источник</a>' in html

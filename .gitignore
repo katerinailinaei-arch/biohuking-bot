@@ -1,18 +1,42 @@
+# Секреты и локальные настройки (нельзя выкладывать на GitHub)
 .env
+.env.*
+!.env.example
+
+# Виртуальное окружение Python
 .venv/
+venv/
+env/
+
+# Кэш и скомпилированные файлы Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Кэш тестов и проверки кода
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
-dist/
-build/
-*.egg-info/
+
+# Локальные данные бота, логи и временные файлы
+data/
+logs/
+tmp/
 .superpowers/
 .artifacts/
 .worktrees/
-logs/
-tmp/
-data/
+
+# Служебные файлы Windows и редакторов
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

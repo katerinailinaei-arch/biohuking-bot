@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from bodrye_bot.identity.service import OwnerGuard
+from bodrye_bot.operations.token_budget import InMemoryUsageLedger, TokenCall
 from bodrye_bot.telegram.onboarding import OnboardingService
 from bodrye_bot.telegram.owner_guide import InMemoryOwnerGuide
 from bodrye_bot.telegram.router import IncomingMessage, TelegramShell
 from bodrye_bot.telegram.studio_state import StudioWait
 from bodrye_bot.telegram.views import (
+    MENU_BUDGET,
     MENU_HELP,
     MENU_POST,
     ONBOARDING_QUICKSTART,
@@ -21,7 +23,10 @@ async def _true() -> bool:
     return True
 
 
-def _shell(guide: InMemoryOwnerGuide | None = None) -> TelegramShell:
+def _shell(
+    guide: InMemoryOwnerGuide | None = None,
+    ledger: InMemoryUsageLedger | None = None,
+) -> TelegramShell:
     return TelegramShell(
         owner_guard=OwnerGuard(42),
         onboarding=OnboardingService(
@@ -32,6 +37,7 @@ def _shell(guide: InMemoryOwnerGuide | None = None) -> TelegramShell:
             style_check=_true,
         ),
         owner_guide=guide if guide is not None else InMemoryOwnerGuide(),
+        usage_ledger=ledger,
     )
 
 
@@ -98,3 +104,65 @@ async def test_settov_collects_samples_until_done() -> None:
     saved = await bot.handle(IncomingMessage(sender_id=42, text="готово"))
     assert "сохранил" in saved.text.lower()
     assert guide.tone_samples(42) == ("После 35 важнее ритм, чем подвиг.",)
+
+
+@pytest.mark.asyncio
+async def test_forward_from_inspiration_channel_asks_owner_to_write() -> None:
+    bot = _shell()
+    reply = await bot.handle(
+        IncomingMessage(sender_id=42, text="чужая шутка про колени", forward_from="kollegi_joke")
+    )
+
+    assert "Крючок приняла" in reply.text
+    assert "своими словами" in reply.text
+    assert "чужая шутка" not in reply.text
+    assert "Пост" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_forward_from_blocked_channel_is_refused() -> None:
+    bot = _shell()
+    reply = await bot.handle(
+        IncomingMessage(sender_id=42, text="вирусный ролик", forward_from="SchroodingerCat")
+    )
+
+    assert "стоп-листе" in reply.text
+    assert "вирусный ролик" not in reply.text
+
+
+@pytest.mark.asyncio
+async def test_sources_lists_inspiration_channels() -> None:
+    bot = _shell()
+    reply = await bot.handle(IncomingMessage(sender_id=42, text="/sources"))
+
+    assert "kollegi_joke" in reply.text
+    assert "SchroodingerCat" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_budget_button_and_costs_command_show_recorded_tokens() -> None:
+    ledger = InMemoryUsageLedger()
+    await ledger.record(
+        TokenCall(
+            owner_id=42,
+            operation="digest_localize",
+            provider="groq",
+            model="openai/gpt-oss-120b",
+            status="succeeded",
+            input_tokens=90,
+            output_tokens=10,
+        )
+    )
+    bot = _shell(ledger=ledger)
+
+    by_button = await bot.handle(IncomingMessage(sender_id=42, text=MENU_BUDGET))
+    by_slash = await bot.handle(IncomingMessage(sender_id=42, text="/costs"))
+
+    for reply in (by_button, by_slash):
+        assert reply.show_main_keyboard is True
+        assert "90" in reply.text
+        assert "10" in reply.text
+        assert "100" in reply.text
+        assert "перевод тем" in reply.text.lower()
+
+

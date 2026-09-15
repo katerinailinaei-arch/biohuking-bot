@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
+from bodrye_bot.digest.localize import CardLocalizer
 from bodrye_bot.digest.service import Digest, DigestCandidate, DigestService, SourceFailure
 from bodrye_bot.digest.views import render_digest
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
@@ -86,6 +87,7 @@ class DigestWorker:
         telegram: TelegramDigestPort,
         clock: Clock,
         service: DigestService | None = None,
+        localizer: CardLocalizer | None = None,
     ) -> None:
         self._owner_id, self._loader, self._runs, self._telegram, self._clock = (
             owner_id,
@@ -95,6 +97,7 @@ class DigestWorker:
             clock,
         )
         self._service = service or DigestService()
+        self._localizer = localizer if localizer is not None else CardLocalizer()
 
     async def run_due(self, now: datetime, *, force: bool = False) -> DigestDelivery | None:
         if now.tzinfo is None:
@@ -119,8 +122,10 @@ class DigestWorker:
             candidates, failures = await self._loader.load(
                 owner_id=self._owner_id, digest_date=digest_date
             )
-            digest = self._service.build(
-                candidates, digest_date=digest_date, source_failures=failures
+            digest = await self._localizer.localize(
+                self._service.build(
+                    candidates, digest_date=digest_date, source_failures=failures
+                )
             )
         except Exception:
             marked = await self._runs.mark_retryable(
