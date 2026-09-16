@@ -101,6 +101,7 @@ async def test_redirect_is_revalidated_and_cannot_rebind_to_private_address():
         resolver=Resolver([("93.184.216.34",), ("127.0.0.1",)]),
         transport=transport,
         now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+        monotonic=Clock(),
     )
 
     with pytest.raises(SafeError) as caught:
