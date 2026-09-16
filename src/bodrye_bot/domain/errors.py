@@ -23,6 +23,7 @@ class SafeErrorCode(StrEnum):
     BACKUP_STALE = "backup_stale"
     INVALID_TRANSITION = "invalid_transition"
     TRANSCRIPTION_FAILED = "transcription_failed"
+    COVER_FAILED = "cover_failed"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -118,6 +119,11 @@ _TEMPLATES: dict[SafeErrorCode, SafeErrorTemplate] = {
         "Не удалось расшифровать аудиосообщение.",
         "Текст не сохранён, исходное сообщение в чате на месте.",
         "Проверьте DEEPGRAM_API_KEY в .env и отправьте аудио ещё раз.",
+    ),
+    SafeErrorCode.COVER_FAILED: SafeErrorTemplate(
+        "Не удалось собрать обложку из этой картинки.",
+        "Исходное фото в чате на месте, в канал ничего не ушло.",
+        "Пришлите обычное фото (не файл-архив) и подпись с текстом на картинке.",
     ),
     SafeErrorCode.INTERNAL_ERROR: SafeErrorTemplate(
         "Произошла внутренняя ошибка.",

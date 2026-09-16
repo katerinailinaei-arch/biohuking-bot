@@ -8,6 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import (
     BotCommand,
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -26,7 +27,13 @@ from bodrye_bot.domain.errors import SafeError
 from bodrye_bot.ports.transcription import AudioTranscriber
 from bodrye_bot.providers.deepgram import DeepgramTranscriber
 from bodrye_bot.telegram.channel import AiogramChannelPublisher
-from bodrye_bot.telegram.media import audio_mime_type, read_clip_bytes, telegram_audio_clip
+from bodrye_bot.telegram.media import (
+    audio_mime_type,
+    read_clip_bytes,
+    read_image_bytes,
+    telegram_audio_clip,
+    telegram_image_file_id,
+)
 from bodrye_bot.telegram.router import (
     IncomingCallback,
     IncomingMessage,
@@ -67,6 +74,7 @@ _BOT_COMMANDS = (
     BotCommand(command="draft", description="Черновик: /draft тема"),
     BotCommand(command="reviewed", description="Я проверила факты черновика"),
     BotCommand(command="publish", description="Отправить проверенный пост в канал"),
+    BotCommand(command="cover", description="Обложка: пришлите фото, текст — в подписи"),
 )
 
 
@@ -79,6 +87,12 @@ def _inline_button(button: TelegramButton) -> InlineKeyboardButton:
 def _markup(response: TelegramResponse) -> InlineKeyboardMarkup | ReplyKeyboardMarkup | None:
     if response.show_main_keyboard:
         return _MAIN_KEYBOARD
+    if response.button_rows:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [_inline_button(button) for button in row] for row in response.button_rows
+            ]
+        )
     if not response.buttons:
         return None
     buttons = [_inline_button(button) for button in response.buttons]
@@ -91,6 +105,18 @@ def _markup(response: TelegramResponse) -> InlineKeyboardMarkup | ReplyKeyboardM
 
 async def _send_response(message: Message, response: TelegramResponse) -> None:
     markup = _markup(response)
+    if response.photo_jpeg:
+        try:
+            await message.answer_photo(
+                photo=BufferedInputFile(response.photo_jpeg, filename="cover.jpg"),
+                caption=response.text,
+                reply_markup=markup,
+            )
+            for extra in response.extra_messages:
+                await message.answer(extra, reply_markup=markup)
+            return
+        except Exception:
+            pass
     if response.photo_url:
         try:
             await message.answer_photo(photo=response.photo_url)
@@ -121,11 +147,20 @@ def create_router(
         command = text.strip().split(" ", 1)[0].split("@", 1)[0]
         if command in _DIGEST_STARTERS or text.strip() in _DIGEST_STARTERS:
             await message.answer(TOPICS_WAIT_TEXT)
+        photo: bytes | None = None
+        image_id = telegram_image_file_id(message)
+        if image_id is not None:
+            try:
+                photo = await read_image_bytes(bot, image_id)
+            except SafeError as error:
+                await message.answer(render_safe_error(error))
+                return
         response = await shell.handle(
             IncomingMessage(
                 sender_id=sender_id,
                 text=text,
                 forward_from=_forward_handle(message),
+                photo=photo,
             )
         )
         await _send_response(message, response)

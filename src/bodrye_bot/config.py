@@ -60,10 +60,17 @@ class Settings(BaseSettings):
     s3_access_key_id: SecretStr | None = None
     s3_secret_access_key: SecretStr | None = None
 
-    @field_validator("deepgram_api_key", mode="before")
+    @field_validator("deepgram_api_key", "database_url", mode="before")
     @classmethod
-    def empty_deepgram_key(cls, value: object) -> object:
+    def empty_optional_secret(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def blank_database_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or not value.get_secret_value().strip():
             return None
         return value
 

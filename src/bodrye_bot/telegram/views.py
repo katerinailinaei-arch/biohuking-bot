@@ -26,7 +26,10 @@ ONBOARDING_WHAT = (
     "Это личный помощник для канала «Бодрые люди». За 20–30 минут можно выбрать "
     "тему, подготовить пост и отправить его в канал — только после вашей проверки.\n\n"
     "Бот умеет:\n"
-    f"• взять крючок из канала-ориентира — вы пересылаете пост сюда, бот переписывает идею своими словами;\n"
+    "• взять крючок из канала-ориентира — вы пересылаете пост сюда, "
+    "бот переписывает идею своими словами;\n"
+    "• собрать обложку: пришлите картинку, затем кнопками выберите "
+    "значок, срез верха или низа и свой текст;\n"
     f"• набросать черновик по вашей теме — кнопка «{MENU_POST}» или /draft;\n"
     "• принять голосовое и расшифровать его;\n"
     "• писать ближе к вашему тону, если загрузить примеры командой /settov;\n"
@@ -46,13 +49,15 @@ ONBOARDING_QUICKSTART = (
     "Кнопки внизу экрана:\n"
     f"• {MENU_TOPICS} — старая кнопка ленты; темы теперь из ваших пересылок.\n"
     f"• {MENU_POST} — напишите тему одной фразой или пришлите голосовое, получите черновик.\n"
+    "• Картинка — обложка: кнопки «Значок», «Верх», «Низ», «Текст».\n"
     f"• {MENU_REVIEWED} — вы лично подтвердили факты. Без этого в канал нельзя.\n"
     f"• {MENU_PUBLISH} — отправить уже проверенный текст подписчикам.\n"
     f"• {MENU_BUDGET} — сколько токенов ушло на модель.\n"
     f"• {MENU_HELP} — эта инструкция ещё раз.\n\n"
     f"Обычный путь: {MENU_TOPICS} → «Развить» (или {MENU_POST}) → поправить при "
     f"необходимости → {MENU_REVIEWED} → {MENU_PUBLISH}.\n\n"
-    "Команды: /digest, /draft тема, /settov, /reviewed, /publish, /costs, /help."
+    "Команды: /digest, /draft тема, /settov, /reviewed, /publish, /costs, /help.\n"
+    "Обложка: пришлите фото, дальше кнопки «Значок», «Верх», «Низ», «Текст»."
 )
 ONBOARDING_MESSAGES = (ONBOARDING_WHAT, ONBOARDING_TOV, ONBOARDING_QUICKSTART)
 RETURNING_START_TEXT = (
@@ -61,6 +66,7 @@ RETURNING_START_TEXT = (
     "Кнопки внизу экрана:\n"
     f"{MENU_TOPICS} — идеи для поста, не публикация\n"
     f"{MENU_POST} — черновик по вашей теме\n"
+    "Картинка — обложка: значок, верх, низ или текст по кнопкам\n"
     f"{MENU_REVIEWED} — факты проверены вами\n"
     f"{MENU_PUBLISH} — отправить проверенный текст в канал\n"
     f"{MENU_BUDGET} — токены и запросы к модели\n"
@@ -97,6 +103,51 @@ TOPICS_WAIT_TEXT = (
     "Смотрю, есть ли сохранённые темы. Обычно быстро. "
     "Главный путь — переслать сюда пост из канала-ориентира: "
     "перепишу идею своими словами, без копирования чужого текста и ролика."
+)
+INLINE_COVER_LOGO = "🌞 Значок"
+INLINE_COVER_TOP = "⬆️ Верх"
+INLINE_COVER_BOTTOM = "⬇️ Низ"
+INLINE_COVER_TEXT = "✏️ Текст"
+INLINE_COVER_TL = "↖️ Лево-верх"
+INLINE_COVER_TC = "⬆️"
+INLINE_COVER_TR = "↗️ Право-верх"
+INLINE_COVER_ML = "⬅️"
+INLINE_COVER_CENTER = "⏺"
+INLINE_COVER_MR = "➡️"
+INLINE_COVER_BL = "↙️ Лево-низ"
+INLINE_COVER_BC = "⬇️"
+INLINE_COVER_BR = "↘️ Право-низ"
+INLINE_COVER_SMALLER = "➖ Мельче"
+INLINE_COVER_LARGER = "➕ Крупнее"
+COVER_PROMPT = (
+    "Пришлите картинку в этот чат.\n\n"
+    "Ничего сама не срежу: под фото будут кнопки «Значок», «Верх», «Низ» и «Текст». "
+    "Нажимайте, что нужно, смотрите превью. В канал сразу не уйдёт."
+)
+COVER_CHOICE = (
+    "Картинка принята, ничего не обрезала.\n\n"
+    "«Значок» — кружок «Бодрые люди»; потом стрелками выберите место и размер. "
+    "«Верх» / «Низ» — срезать плашку. "
+    "«Текст» — напишите фразу следующим сообщением, наложу сверху.\n\n"
+    "Можно нажать несколько кнопок подряд. В канал не ушло."
+)
+COVER_LOGO_HINT = (
+    "Значок на месте. Сразу под фото: «Мельче» и «Крупнее» — размер. "
+    "Четыре угла — куда поставить, чтобы закрыть чужой кружок. "
+    "Жмите «Крупнее», пока не перекроет. В канал не ушло."
+)
+COVER_EDITED = (
+    "Превью обновила. Можно нажать ещё кнопку или прислать другую картинку. "
+    "В канал не ушло."
+)
+COVER_STALE = (
+    "Эти кнопки уже не к той картинке: либо бот перезапускался, "
+    "либо вы прислали новое фото, а нажали кнопку под старым.\n\n"
+    "Пришлите картинку ещё раз и жмите только кнопки под самым нижним превью."
+)
+COVER_ASK_TEXT = (
+    "Напишите одним сообщением текст, который должен быть на верхней плашке. "
+    "Картинку пока не трогаю."
 )
 FORWARD_INSPIRATION = (
     "Крючок приняла. Перепишу текст своими словами, не нарушая прав: "
@@ -175,8 +226,31 @@ def render_manual_published() -> str:
 __all__ = [
     "CARD_KEEP_PREFIX",
     "CARD_SKIP_TEXT",
+    "COVER_ASK_TEXT",
+    "COVER_CHOICE",
+    "COVER_EDITED",
+    "COVER_LOGO_HINT",
+    "COVER_PROMPT",
+    "COVER_STALE",
     "DRAFT_NEED_TOPIC",
+    "FORWARD_BLOCKED",
+    "FORWARD_INSPIRATION",
     "HELP_TEXT",
+    "INLINE_COVER_BC",
+    "INLINE_COVER_BL",
+    "INLINE_COVER_BOTTOM",
+    "INLINE_COVER_BR",
+    "INLINE_COVER_CENTER",
+    "INLINE_COVER_LARGER",
+    "INLINE_COVER_LOGO",
+    "INLINE_COVER_ML",
+    "INLINE_COVER_MR",
+    "INLINE_COVER_SMALLER",
+    "INLINE_COVER_TC",
+    "INLINE_COVER_TEXT",
+    "INLINE_COVER_TL",
+    "INLINE_COVER_TOP",
+    "INLINE_COVER_TR",
     "INLINE_PUBLISH",
     "INLINE_REFINE",
     "INLINE_REGEN",
@@ -202,8 +276,6 @@ __all__ = [
     "SETTOV_PROMPT",
     "SETTOV_SAVED",
     "STUDIO_PROMPTS",
-    "FORWARD_BLOCKED",
-    "FORWARD_INSPIRATION",
     "SOURCES_LIST",
     "TOPICS_WAIT_TEXT",
     "render_manual_draft",

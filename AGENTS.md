@@ -30,6 +30,7 @@ biohuking-bot/
 │   ├── db/                   # SQLAlchemy, repositories, Alembic
 │   ├── identity/             # owner allowlist и sensitive input
 │   ├── telegram/             # команды, callbacks, русские views
+│   ├── visual/               # обложки: обрезка плашек, логотип
 │   ├── sources/              # allowlist, fetch, provenance
 │   ├── digest/               # ranking, deduplication, delivery
 │   ├── medical/              # claims, evidence, risk gate
@@ -147,6 +148,7 @@ python -m alembic upgrade head
 python -m bodrye_bot.main_bot
 # Дайджест 10:00 МСК и /digest живут в этом процессе. main_worker не запускать параллельно.
 # Первый /start — онбординг из 3 сообщений; /help и кнопка «Помощь» повторяют инструкцию; /settov — тон; /costs и кнопка «Бюджет» — токены Groq.
+# Картинка в чат или /cover — обложка: кнопки «Значок», «Верх», «Низ», «Текст». Без автообрезки.
 
 # Сборка и health gate
 docker compose build

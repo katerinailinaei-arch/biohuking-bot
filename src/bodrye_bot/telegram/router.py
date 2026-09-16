@@ -23,15 +23,32 @@ from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.operations.token_budget import render_token_budget, summarize_token_calls
 from bodrye_bot.ports.usage_ledger import UsageLedger
 from bodrye_bot.sources.catalog import SourceCatalog
+from bodrye_bot.telegram.cover_state import CoverBadge, CoverSession, CoverSessionStore
 from bodrye_bot.telegram.onboarding import OnboardingService
 from bodrye_bot.telegram.owner_guide import InMemoryOwnerGuide, OwnerGuide
 from bodrye_bot.telegram.studio_state import StudioSession, StudioSessionStore, StudioWait
 from bodrye_bot.telegram.views import (
     CARD_KEEP_PREFIX,
     CARD_SKIP_TEXT,
+    COVER_ASK_TEXT,
+    COVER_CHOICE,
+    COVER_EDITED,
+    COVER_LOGO_HINT,
+    COVER_PROMPT,
+    COVER_STALE,
     DRAFT_NEED_TOPIC,
     FORWARD_BLOCKED,
     FORWARD_INSPIRATION,
+    INLINE_COVER_BL,
+    INLINE_COVER_BOTTOM,
+    INLINE_COVER_BR,
+    INLINE_COVER_LARGER,
+    INLINE_COVER_LOGO,
+    INLINE_COVER_SMALLER,
+    INLINE_COVER_TEXT,
+    INLINE_COVER_TL,
+    INLINE_COVER_TOP,
+    INLINE_COVER_TR,
     INLINE_PUBLISH,
     INLINE_REFINE,
     INLINE_REGEN,
@@ -60,6 +77,15 @@ from bodrye_bot.telegram.views import (
     render_safe_error,
     render_studio_text,
 )
+from bodrye_bot.visual.cover import (
+    CROP_BOTTOM,
+    CROP_TOP,
+    LOGO_RATIO_MAX,
+    LOGO_RATIO_MIN,
+    LOGO_RATIO_STEP,
+    LogoPlace,
+    brand_cover,
+)
 
 _WORKFLOW_TARGETS: dict[str, WorkflowStatus] = {
     "confirm_extraction": WorkflowStatus.EXTRACTION_CONFIRMED,
@@ -71,11 +97,27 @@ _WORKFLOW_TARGETS: dict[str, WorkflowStatus] = {
 _MANUAL_CALLBACK_ACTIONS = frozenset({"reviewed", "publish_now"})
 _STUDIO_CALLBACK_ACTIONS = frozenset({"refine", "regen", "copy", "home"})
 _DIGEST_CALLBACK_ACTIONS = frozenset({"develop", "keep", "skip"})
+_COVER_PLACE_ACTIONS: dict[str, LogoPlace] = {
+    "cover_tl": LogoPlace.TOP_LEFT,
+    "cover_tc": LogoPlace.TOP_CENTER,
+    "cover_tr": LogoPlace.TOP_RIGHT,
+    "cover_ml": LogoPlace.MID_LEFT,
+    "cover_c": LogoPlace.CENTER,
+    "cover_mr": LogoPlace.MID_RIGHT,
+    "cover_bl": LogoPlace.BOTTOM_LEFT,
+    "cover_bc": LogoPlace.BOTTOM_CENTER,
+    "cover_br": LogoPlace.BOTTOM_RIGHT,
+}
+_COVER_CALLBACK_ACTIONS = frozenset(
+    {"cover_logo", "cover_top", "cover_bottom", "cover_text", "cover_smaller", "cover_larger"}
+    | set(_COVER_PLACE_ACTIONS)
+)
 _CALLBACK_ACTIONS = (
     frozenset(_WORKFLOW_TARGETS)
     | _MANUAL_CALLBACK_ACTIONS
     | _STUDIO_CALLBACK_ACTIONS
     | _DIGEST_CALLBACK_ACTIONS
+    | _COVER_CALLBACK_ACTIONS
 )
 _MENU_KIND = {
     MENU_POST: StudioKind.POST,
@@ -104,6 +146,7 @@ class IncomingMessage:
     text: str
     transcribed: bool = False
     forward_from: str | None = None
+    photo: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -125,10 +168,12 @@ class TelegramResponse:
     gates: frozenset[str] = field(default_factory=frozenset)
     ready: bool | None = None
     buttons: tuple[TelegramButton, ...] = ()
+    button_rows: tuple[tuple[TelegramButton, ...], ...] = ()
     show_main_keyboard: bool = False
     toast: str | None = None
     skip_message: bool = False
     photo_url: str | None = None
+    photo_jpeg: bytes | None = None
     extra_messages: tuple[str, ...] = ()
 
 
@@ -209,6 +254,7 @@ class TelegramShell:
         card_shelf: DigestCardShelf | None = None,
         owner_guide: OwnerGuide | None = None,
         usage_ledger: UsageLedger | None = None,
+        cover_sessions: CoverSessionStore | None = None,
     ) -> None:
         self._owner_guard = owner_guard
         self._onboarding = onboarding if onboarding is not None else OnboardingService()
@@ -231,12 +277,17 @@ class TelegramShell:
         self._card_shelf = card_shelf if card_shelf is not None else CARD_SHELF
         self._owner_guide = owner_guide if owner_guide is not None else InMemoryOwnerGuide()
         self._usage_ledger = usage_ledger
+        self._cover_sessions = (
+            cover_sessions if cover_sessions is not None else CoverSessionStore()
+        )
 
     async def handle(self, message: IncomingMessage) -> TelegramResponse:
         try:
             owner_id = self._owner_guard.authorize(message.sender_id)
             if message.text.strip().lower().startswith("python"):
                 return TelegramResponse(PYTHON_IN_CHAT)
+            if message.photo is not None:
+                return self._open_cover(owner_id, message)
             if message.forward_from is not None:
                 return self._inspiration_forward(message.forward_from)
             label = message.text.strip()
@@ -261,6 +312,11 @@ class TelegramShell:
                 return self._begin_tone(owner_id)
             if command == "/help":
                 return _guide_response()
+            if command == "/cover":
+                return TelegramResponse(COVER_PROMPT, show_main_keyboard=True)
+            cover = self._cover_sessions.get(owner_id)
+            if cover is not None and cover.wait_text and not command.startswith("/"):
+                return self._apply_cover_text(owner_id, message.text)
             waiting_tone = session is not None and session.wait is StudioWait.TONE
             if waiting_tone and not command.startswith("/"):
                 return self._collect_tone(owner_id, message.text)
@@ -298,6 +354,131 @@ class TelegramShell:
         except Exception as error:
             return _internal_error_response("message", error)
 
+    def _open_cover(self, owner_id: int, message: IncomingMessage) -> TelegramResponse:
+        if message.forward_from is not None:
+            blocked = self._inspiration_forward(message.forward_from)
+            if blocked.text == FORWARD_BLOCKED:
+                return blocked
+        photo = message.photo or b""
+        if not photo:
+            raise SafeError.for_code(SafeErrorCode.COVER_FAILED)
+        session = CoverSession.from_photo(photo)
+        self._cover_sessions.put(owner_id, session)
+        return self._cover_reply(session, COVER_CHOICE)
+
+    def _encode_cover(self, action: str, cover_id: UUID) -> str:
+        assert self._callback_codec is not None
+        return self._callback_codec.encode(
+            action, cover_id, expires_at=self._clock() + self._callback_ttl
+        )
+
+    def _cover_button(self, action: str, label: str, cover_id: UUID) -> TelegramButton:
+        return TelegramButton(text=label, callback_data=self._encode_cover(action, cover_id))
+
+    def _cover_button_rows(self, session: CoverSession) -> tuple[tuple[TelegramButton, ...], ...]:
+        if self._callback_codec is None:
+            return ()
+        cover_id = session.cover_id
+        rows: list[tuple[TelegramButton, ...]] = [
+            (
+                self._cover_button("cover_logo", INLINE_COVER_LOGO, cover_id),
+                self._cover_button("cover_top", INLINE_COVER_TOP, cover_id),
+            ),
+            (
+                self._cover_button("cover_bottom", INLINE_COVER_BOTTOM, cover_id),
+                self._cover_button("cover_text", INLINE_COVER_TEXT, cover_id),
+            ),
+        ]
+        if session.badge is not None:
+            rows.extend(
+                (
+                    (
+                        self._cover_button("cover_smaller", INLINE_COVER_SMALLER, cover_id),
+                        self._cover_button("cover_larger", INLINE_COVER_LARGER, cover_id),
+                    ),
+                    (
+                        self._cover_button("cover_tl", INLINE_COVER_TL, cover_id),
+                        self._cover_button("cover_tr", INLINE_COVER_TR, cover_id),
+                    ),
+                    (
+                        self._cover_button("cover_bl", INLINE_COVER_BL, cover_id),
+                        self._cover_button("cover_br", INLINE_COVER_BR, cover_id),
+                    ),
+                )
+            )
+        return tuple(rows)
+
+    def _preview_cover(self, session: CoverSession) -> None:
+        if session.badge is None:
+            session.working = session.canvas
+            return
+        session.working = brand_cover(
+            session.canvas,
+            stamp_logo=True,
+            logo_place=session.badge.place,
+            logo_ratio=session.badge.ratio,
+        )
+
+    def _cover_reply(self, session: CoverSession, text: str) -> TelegramResponse:
+        rows = self._cover_button_rows(session)
+        return TelegramResponse(
+            text,
+            buttons=tuple(button for row in rows for button in row),
+            button_rows=rows,
+            photo_jpeg=session.working,
+        )
+
+    def _handle_cover_callback(
+        self, owner_id: int, action: str, cover_id: UUID
+    ) -> TelegramResponse:
+        session = self._cover_sessions.get(owner_id)
+        if session is None or session.cover_id != cover_id:
+            return TelegramResponse(COVER_STALE, show_main_keyboard=True)
+        if action == "cover_text":
+            session.wait_text = True
+            self._cover_sessions.put(owner_id, session)
+            return self._cover_reply(session, COVER_ASK_TEXT)
+        session.wait_text = False
+        if action == "cover_logo":
+            session.badge = CoverBadge()
+            hint = COVER_LOGO_HINT
+        elif action in _COVER_PLACE_ACTIONS:
+            if session.badge is None:
+                session.badge = CoverBadge()
+            session.badge.place = _COVER_PLACE_ACTIONS[action]
+            hint = COVER_LOGO_HINT
+        elif action == "cover_smaller":
+            if session.badge is None:
+                session.badge = CoverBadge()
+            session.badge.ratio = max(LOGO_RATIO_MIN, session.badge.ratio - LOGO_RATIO_STEP)
+            hint = COVER_LOGO_HINT
+        elif action == "cover_larger":
+            if session.badge is None:
+                session.badge = CoverBadge()
+            session.badge.ratio = min(LOGO_RATIO_MAX, session.badge.ratio + LOGO_RATIO_STEP)
+            hint = COVER_LOGO_HINT
+        elif action == "cover_top":
+            session.canvas = brand_cover(session.canvas, crop_top=CROP_TOP)
+            hint = COVER_EDITED
+        elif action == "cover_bottom":
+            session.canvas = brand_cover(session.canvas, crop_bottom=CROP_BOTTOM)
+            hint = COVER_EDITED
+        else:
+            return _invalid_transition_response()
+        self._preview_cover(session)
+        self._cover_sessions.put(owner_id, session)
+        return self._cover_reply(session, hint)
+
+    def _apply_cover_text(self, owner_id: int, text: str) -> TelegramResponse:
+        session = self._cover_sessions.get(owner_id)
+        if session is None or not session.wait_text:
+            return TelegramResponse(COVER_STALE, show_main_keyboard=True)
+        session.wait_text = False
+        session.canvas = brand_cover(session.canvas, overlay_text=text.strip())
+        self._preview_cover(session)
+        self._cover_sessions.put(owner_id, session)
+        return self._cover_reply(session, COVER_EDITED)
+
     def _inspiration_forward(self, handle: str) -> TelegramResponse:
         catalog = SourceCatalog.initial()
         cleaned = handle.strip().lstrip("@").lower()
@@ -324,6 +505,10 @@ class TelegramShell:
                 )
             if payload.action in _MANUAL_CALLBACK_ACTIONS:
                 return await self._handle_manual_callback(
+                    owner_id, payload.action, payload.record_id
+                )
+            if payload.action in _COVER_CALLBACK_ACTIONS:
+                return self._handle_cover_callback(
                     owner_id, payload.action, payload.record_id
                 )
             if self._workflow_repository is None:

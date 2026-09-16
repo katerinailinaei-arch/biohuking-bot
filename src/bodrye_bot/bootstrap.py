@@ -12,6 +12,7 @@ from bodrye_bot.editorial.template_draft import TemplateDraftWriter
 from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.operations.token_budget import InMemoryUsageLedger
 from bodrye_bot.ports.usage_ledger import UsageLedger
+from bodrye_bot.telegram.cover_state import FileCoverSessionStore
 from bodrye_bot.telegram.onboarding import OnboardingService, ReadinessCheck
 from bodrye_bot.telegram.owner_guide import FileOwnerGuide
 from bodrye_bot.telegram.router import CallbackCodec, TelegramShell
@@ -49,14 +50,19 @@ def build_telegram_shell(
         channel_publisher=channel_publisher,
         digest_worker=digest_worker,
         owner_guide=FileOwnerGuide(Path("data") / "owner_guide.json"),
+        cover_sessions=FileCoverSessionStore(Path("data") / "cover_session.json"),
         usage_ledger=usage_ledger,
     )
 
 
 def build_usage_ledger(settings: Settings) -> UsageLedger:
-    if settings.database_url is None:
+    url = settings.database_url
+    if url is None or not url.get_secret_value().strip():
         return InMemoryUsageLedger()
-    return SqlAlchemyUsageLedger(async_session_factory(settings))
+    try:
+        return SqlAlchemyUsageLedger(async_session_factory(settings))
+    except Exception:
+        return InMemoryUsageLedger()
 
 
 async def _blocked() -> bool:

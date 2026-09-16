@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pytest
+from PIL import Image, ImageDraw
 
 from bodrye_bot.identity.service import OwnerGuard
 from bodrye_bot.operations.token_budget import InMemoryUsageLedger, TokenCall
@@ -9,6 +12,8 @@ from bodrye_bot.telegram.owner_guide import InMemoryOwnerGuide
 from bodrye_bot.telegram.router import IncomingMessage, TelegramShell
 from bodrye_bot.telegram.studio_state import StudioWait
 from bodrye_bot.telegram.views import (
+    COVER_CHOICE,
+    COVER_PROMPT,
     MENU_BUDGET,
     MENU_HELP,
     MENU_POST,
@@ -165,4 +170,55 @@ async def test_budget_button_and_costs_command_show_recorded_tokens() -> None:
         assert "100" in reply.text
         assert "перевод тем" in reply.text.lower()
 
+
+def _sample_photo() -> bytes:
+    image = Image.new("RGB", (200, 100), (0, 180, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 199, 19), fill=(220, 0, 0))
+    draw.rectangle((0, 80, 199, 99), fill=(0, 0, 220))
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_cover_command_explains_how_to_send_a_photo() -> None:
+    bot = _shell()
+    reply = await bot.handle(IncomingMessage(sender_id=42, text="/cover"))
+
+    assert reply.text == COVER_PROMPT
+    assert reply.show_main_keyboard is True
+
+
+@pytest.mark.asyncio
+async def test_photo_offers_cover_buttons_without_auto_crop() -> None:
+    bot = _shell()
+    reply = await bot.handle(
+        IncomingMessage(
+            sender_id=42,
+            text="Ночью не лежится, утром удобно",
+            photo=_sample_photo(),
+        )
+    )
+
+    assert reply.text == COVER_CHOICE
+    assert reply.photo_jpeg is not None
+    preview = Image.open(BytesIO(reply.photo_jpeg))
+    assert preview.size == (200, 100)
+
+
+@pytest.mark.asyncio
+async def test_blocked_forward_photo_is_not_branded() -> None:
+    bot = _shell()
+    reply = await bot.handle(
+        IncomingMessage(
+            sender_id=42,
+            text="мем",
+            photo=_sample_photo(),
+            forward_from="SchroodingerCat",
+        )
+    )
+
+    assert reply.photo_jpeg is None
+    assert "стоп-листе" in reply.text
 

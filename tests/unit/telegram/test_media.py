@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from bodrye_bot.domain.errors import SafeError, SafeErrorCode
-from bodrye_bot.telegram.media import audio_mime_type, read_clip_bytes, telegram_audio_clip
+from bodrye_bot.telegram.media import (
+    audio_mime_type,
+    read_clip_bytes,
+    read_image_bytes,
+    telegram_audio_clip,
+    telegram_image_file_id,
+)
 
 
 def test_prefers_spoken_note_over_music_file() -> None:
@@ -52,3 +58,27 @@ async def test_missing_download_is_safe() -> None:
         await read_clip_bytes(FakeBot(), SimpleNamespace(file_id="AgFILE"))
 
     assert caught.value.code is SafeErrorCode.TRANSCRIPTION_FAILED
+
+
+def test_picks_largest_telegram_photo() -> None:
+    message = SimpleNamespace(
+        photo=(
+            SimpleNamespace(file_id="small"),
+            SimpleNamespace(file_id="large"),
+        ),
+        document=None,
+    )
+
+    assert telegram_image_file_id(message) == "large"
+
+
+@pytest.mark.asyncio
+async def test_reads_image_bytes_from_file_id() -> None:
+    class FakeBot:
+        async def download(self, file: str, timeout: int = 30) -> BytesIO:
+            assert file == "AgPHOTO"
+            return BytesIO(b"JFIF-test")
+
+    payload = await read_image_bytes(FakeBot(), "AgPHOTO")
+
+    assert payload == b"JFIF-test"

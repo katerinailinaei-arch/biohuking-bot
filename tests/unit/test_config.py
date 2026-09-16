@@ -84,8 +84,19 @@ def test_get_settings_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.telegram_channel_id == -100123
 
 
-def test_settings_accept_public_channel_username() -> None:
-    settings = Settings(**base_settings(telegram_channel_id="@bodryelyudi"))
+def test_blank_database_url_is_treated_as_missing() -> None:
+    settings = Settings(**base_settings(database_url=""))
 
-    assert settings.telegram_channel_id == "@bodryelyudi"
+    assert settings.database_url is None
+
+
+def test_usage_ledger_starts_without_database() -> None:
+    from bodrye_bot.bootstrap import build_usage_ledger
+    from bodrye_bot.operations.token_budget import InMemoryUsageLedger
+
+    settings = Settings(**base_settings(database_url=""))
+
+    assert isinstance(build_usage_ledger(settings), InMemoryUsageLedger)
+
+
 

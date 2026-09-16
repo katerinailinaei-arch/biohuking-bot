@@ -21,7 +21,11 @@ dependencies = [
   "feedparser>=6.0,<7",
   "bleach>=6.2,<7",
   "boto3>=1.40,<2",
+  "pillow>=11,<12",
 ]
+
+[tool.setuptools.package-data]
+bodrye_bot = ["visual/brand/*"]
 
 [dependency-groups]
 dev = [
